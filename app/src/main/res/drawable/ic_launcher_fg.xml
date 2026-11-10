@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Download arrow into a tray, 108dp adaptive canvas -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FF2E63"
+        android:pathData="M48,30h12v22h10l-16,18l-16,-18h10z" />
+    <path
+        android:fillColor="#08D9D6"
+        android:pathData="M34,70h6v6h28v-6h6v12h-40z" />
+</vector>
