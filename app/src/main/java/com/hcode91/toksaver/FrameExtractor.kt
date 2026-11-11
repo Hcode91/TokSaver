@@ -21,6 +21,8 @@ object FrameExtractor {
 
     /**
      * Saves frames from [file] as JPEGs to Pictures/TikTok/<user>/<videoId>/.
+     * If [keep] is given, only frames it accepts are saved; file names keep the
+     * original frame number so gaps show which frames were skipped.
      * Returns the number of frames saved. Stops early if [cancelled] returns true.
      */
     fun extract(
@@ -30,6 +32,7 @@ object FrameExtractor {
         videoId: String,
         mode: FrameMode,
         cancelled: () -> Boolean,
+        keep: ((Bitmap) -> Boolean)? = null,
         onProgress: (Int) -> Unit,
     ): Int {
         if (mode == FrameMode.NONE) return 0
@@ -43,6 +46,15 @@ object FrameExtractor {
 
             val relPath = "${Environment.DIRECTORY_PICTURES}/TikTok/$username/$videoId"
             var saved = 0
+            var index = 0
+            fun handle(bmp: Bitmap) {
+                index++
+                if (keep == null || keep(bmp)) {
+                    saved++
+                    saveJpeg(context, bmp, relPath, "frame_%05d.jpg".format(index))
+                }
+                bmp.recycle()
+            }
 
             if (mode == FrameMode.ALL && frameCount > 0) {
                 // Decode sequentially in small batches: fast, and keeps memory low.
@@ -58,11 +70,7 @@ object FrameExtractor {
                         listOfNotNull(runCatching { mmr.getFrameAtIndex(i) }.getOrNull())
                     }
                     if (frames.isEmpty()) break
-                    for (bmp in frames) {
-                        saved++
-                        saveJpeg(context, bmp, relPath, "frame_%05d.jpg".format(saved))
-                        bmp.recycle()
-                    }
+                    for (bmp in frames) handle(bmp)
                     i += n
                     onProgress(i * 100 / frameCount)
                 }
@@ -75,11 +83,7 @@ object FrameExtractor {
                 while (t < totalUs) {
                     if (cancelled()) break
                     val bmp = mmr.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST)
-                    if (bmp != null) {
-                        saved++
-                        saveJpeg(context, bmp, relPath, "frame_%05d.jpg".format(saved))
-                        bmp.recycle()
-                    }
+                    if (bmp != null) handle(bmp)
                     t += stepUs
                     onProgress((t * 100 / totalUs).toInt().coerceAtMost(100))
                 }

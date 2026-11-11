@@ -175,12 +175,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = store.frameMode
         set(v) { store.frameMode = v }
 
-    fun startDownloads(frameMode: FrameMode) {
+    var lastPersonFilter: PersonFilter
+        get() = store.personFilter
+        set(v) { store.personFilter = v }
+
+    fun startDownloads(frameMode: FrameMode, personFilter: PersonFilter) {
         val s = _state.value
         if (s.downloading || s.fetching) return
         val queue = s.videos.filter { it.selected }
         if (queue.isEmpty()) return
         lastFrameMode = frameMode
+        lastPersonFilter = personFilter
         val user = s.username
         cancelDownloads = false
         queue.forEach { q -> setVideo(q.id) { it.copy(state = DlState.Queued) } }
@@ -192,6 +197,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var ok = 0
             var failed = 0
             var framesSaved = 0
+            var detectorError: String? = null
+            val detector = if (frameMode != FrameMode.NONE && personFilter.enabled) {
+                try {
+                    PersonDetector(app, personFilter)
+                } catch (e: Throwable) {
+                    detectorError = e.message ?: "person detector failed to load"
+                    null
+                }
+            } else null
             for ((i, v) in queue.withIndex()) {
                 if (cancelDownloads) break
                 _state.update { it.copy(status = "Downloading ${i + 1} of ${queue.size}…") }
@@ -226,6 +240,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         framesSaved += FrameExtractor.extract(
                             app, file, user, v.id, frameMode,
                             cancelled = { cancelDownloads },
+                            keep = detector?.let { it::hasPerson },
                         ) { pct ->
                             if (pct != lastPct) {
                                 lastPct = pct
@@ -244,6 +259,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             workDir.deleteRecursively()
+            detector?.close()
             // Anything still queued after a cancel goes back to idle.
             _state.update { st ->
                 st.copy(
@@ -252,6 +268,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     status = buildString {
                         append("Saved $ok to Movies/TikTok/$user")
                         if (framesSaved > 0) append(" · $framesSaved frames to Pictures/TikTok/$user")
+                        if (detector != null) append(" (people only)")
+                        detectorError?.let { append(" · person filter off: $it") }
                         if (failed > 0) append(" · $failed failed")
                         if (cancelDownloads) append(" · cancelled")
                     },

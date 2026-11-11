@@ -78,6 +78,18 @@ class SavedStore(context: Context) {
             .getOrDefault(FrameMode.NONE)
         set(v) = prefs.edit().putString("__frame_mode", v.name).apply()
 
+    var personFilter: PersonFilter
+        get() = PersonFilter(
+            enabled = prefs.getBoolean("__pf_on", false),
+            minConfidence = prefs.getFloat("__pf_conf", 0.5f),
+            minAreaPercent = prefs.getInt("__pf_area", 10),
+        )
+        set(v) = prefs.edit()
+            .putBoolean("__pf_on", v.enabled)
+            .putFloat("__pf_conf", v.minConfidence)
+            .putInt("__pf_area", v.minAreaPercent)
+            .apply()
+
     var lastUpdate: Long
         get() = prefs.getLong("__last_update", 0L)
         set(v) = prefs.edit().putLong("__last_update", v).apply()

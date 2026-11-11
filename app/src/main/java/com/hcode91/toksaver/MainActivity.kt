@@ -7,7 +7,11 @@ import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.TextView
+import com.google.android.material.checkbox.MaterialCheckBox
+import com.google.android.material.slider.Slider
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.Lifecycle
@@ -127,14 +131,52 @@ class MainActivity : AppCompatActivity() {
     /** Before downloading, ask whether to also cut each video into images. */
     private fun askFrameMode() {
         val modes = FrameMode.entries
-        var chosen = modes.indexOf(vm.lastFrameMode).coerceAtLeast(0)
         val n = vm.state.value.selectedCount
+        val view = layoutInflater.inflate(R.layout.dialog_download, null)
+        val group = view.findViewById<RadioGroup>(R.id.modeGroup)
+        val people = view.findViewById<MaterialCheckBox>(R.id.peopleOnly)
+        val peopleOpts = view.findViewById<View>(R.id.peopleOptions)
+        val confLabel = view.findViewById<TextView>(R.id.confLabel)
+        val confSlider = view.findViewById<Slider>(R.id.confSlider)
+        val areaLabel = view.findViewById<TextView>(R.id.areaLabel)
+        val areaSlider = view.findViewById<Slider>(R.id.areaSlider)
+
+        modes.forEachIndexed { i, m ->
+            group.addView(RadioButton(this).apply { id = 1000 + i; text = m.label })
+        }
+        val pf = vm.lastPersonFilter
+        group.check(1000 + modes.indexOf(vm.lastFrameMode).coerceAtLeast(0))
+        people.isChecked = pf.enabled
+        confSlider.value = (pf.minConfidence * 100).toInt().coerceIn(20, 95).let { it - it % 5 }.toFloat()
+        areaSlider.value = pf.minAreaPercent.coerceIn(0, 50).toFloat()
+
+        fun refresh() {
+            val framesOn = group.checkedRadioButtonId != 1000 + modes.indexOf(FrameMode.NONE)
+            people.isEnabled = framesOn
+            peopleOpts.visibility = if (framesOn && people.isChecked) View.VISIBLE else View.GONE
+            confLabel.text = "Detection confidence: ${confSlider.value.toInt()}%"
+            areaLabel.text = "Person must fill at least ${areaSlider.value.toInt()}% of the frame"
+        }
+        group.setOnCheckedChangeListener { _, _ -> refresh() }
+        people.setOnCheckedChangeListener { _, _ -> refresh() }
+        confSlider.addOnChangeListener { _, _, _ -> refresh() }
+        areaSlider.addOnChangeListener { _, _, _ -> refresh() }
+        refresh()
+
         MaterialAlertDialogBuilder(this)
             .setTitle("Download $n video${if (n == 1) "" else "s"}")
-            .setSingleChoiceItems(modes.map { it.label }.toTypedArray(), chosen) { _, which ->
-                chosen = which
+            .setView(view)
+            .setPositiveButton("Download") { _, _ ->
+                val mode = modes.getOrElse(group.checkedRadioButtonId - 1000) { FrameMode.NONE }
+                vm.startDownloads(
+                    mode,
+                    PersonFilter(
+                        enabled = people.isChecked,
+                        minConfidence = confSlider.value / 100f,
+                        minAreaPercent = areaSlider.value.toInt(),
+                    ),
+                )
             }
-            .setPositiveButton("Download") { _, _ -> vm.startDownloads(modes[chosen]) }
             .setNegativeButton("Cancel", null)
             .show()
     }
