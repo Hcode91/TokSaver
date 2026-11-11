@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Context.MODE_PRIVATE
 import android.widget.FrameLayout
 import android.util.AttributeSet
+import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 sealed class DlState {
     data object Idle : DlState()
@@ -19,6 +21,7 @@ data class Video(
     val url: String,
     val title: String,
     val thumbnail: String?,
+    val animatedThumb: String? = null,
     val duration: Int?,
     val views: Long?,
     val timestamp: Long?,
@@ -26,6 +29,12 @@ data class Video(
     val saved: Boolean = false,
     val state: DlState = DlState.Idle,
 ) {
+    fun toCache(): JSONObject = JSONObject().apply {
+        put("id", id); put("url", url); put("title", title)
+        put("thumb", thumbnail ?: ""); put("anim", animatedThumb ?: "")
+        put("dur", duration ?: -1); put("views", views ?: -1); put("ts", timestamp ?: -1)
+    }
+
     companion object {
         /** Parses one line of `yt-dlp --flat-playlist --dump-json` output. */
         fun fromJson(line: String, username: String): Video? = try {
@@ -39,6 +48,7 @@ data class Video(
                 url = url,
                 title = o.optString("title", ""),
                 thumbnail = pickThumb(o),
+                animatedThumb = pickAnimated(o),
                 duration = o.optInt("duration", -1).takeIf { it > 0 },
                 views = o.optLong("view_count", -1).takeIf { it >= 0 },
                 timestamp = o.optLong("timestamp", -1).takeIf { it > 0 },
@@ -46,6 +56,29 @@ data class Video(
         } catch (e: Exception) {
             null
         }
+
+        /** TikTok's own short looping preview (animated webp), if offered. */
+        private fun pickAnimated(o: JSONObject): String? {
+            val arr = o.optJSONArray("thumbnails") ?: return null
+            for (i in 0 until arr.length()) {
+                val t = arr.optJSONObject(i) ?: continue
+                if (t.optString("id") == "dynamicCover") {
+                    return t.optString("url").takeIf { it.startsWith("http") }
+                }
+            }
+            return null
+        }
+
+        fun fromCache(o: JSONObject) = Video(
+            id = o.getString("id"),
+            url = o.getString("url"),
+            title = o.optString("title", ""),
+            thumbnail = o.optString("thumb").ifBlank { null },
+            animatedThumb = o.optString("anim").ifBlank { null },
+            duration = o.optInt("dur", -1).takeIf { it > 0 },
+            views = o.optLong("views", -1).takeIf { it >= 0 },
+            timestamp = o.optLong("ts", -1).takeIf { it > 0 },
+        )
 
         private fun pickThumb(o: JSONObject): String? {
             o.optString("thumbnail").takeIf { it.startsWith("http") }?.let { return it }
@@ -60,6 +93,36 @@ data class Video(
             }
             return fallback ?: arr.optJSONObject(0)?.optString("url")
         }
+    }
+}
+
+/** Saved video lists per username, so big profiles open instantly. */
+class ListCache(context: Context) {
+    private val dir = File(context.filesDir, "lists").apply { mkdirs() }
+    private fun file(user: String) = File(dir, user.lowercase() + ".json")
+
+    data class Entry(val videos: List<Video>, val savedAt: Long, val complete: Boolean)
+
+    fun load(user: String): Entry? = try {
+        val f = file(user)
+        if (!f.exists()) null else {
+            val o = JSONObject(f.readText())
+            val arr = o.getJSONArray("videos")
+            Entry((0 until arr.length()).map { Video.fromCache(arr.getJSONObject(it)) }, o.getLong("savedAt"), o.optBoolean("complete", false))
+        }
+    } catch (e: Exception) {
+        null
+    }
+
+    fun save(user: String, videos: List<Video>, complete: Boolean) {
+        if (videos.isEmpty()) return
+        try {
+            val arr = JSONArray()
+            videos.forEach { arr.put(it.toCache()) }
+            val tmp = File(dir, "$user.tmp")
+            tmp.writeText(JSONObject().put("savedAt", System.currentTimeMillis()).put("complete", complete).put("videos", arr).toString())
+            tmp.renameTo(file(user))
+        } catch (_: Exception) { }
     }
 }
 
@@ -89,6 +152,10 @@ class SavedStore(context: Context) {
             .putFloat("__pf_conf", v.minConfidence)
             .putInt("__pf_area", v.minAreaPercent)
             .apply()
+
+    var animatedPreviews: Boolean
+        get() = prefs.getBoolean("__anim", true)
+        set(v) = prefs.edit().putBoolean("__anim", v).apply()
 
     var lastUpdate: Long
         get() = prefs.getLong("__last_update", 0L)

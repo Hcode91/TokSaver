@@ -8,10 +8,13 @@ import android.widget.TextView
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
+import coil.ImageLoader
 import coil.load
 import com.google.android.material.progressindicator.LinearProgressIndicator
 
 class VideoAdapter(
+    private val imageLoader: ImageLoader,
+    private val animated: () -> Boolean,
     private val onTap: (Video) -> Unit,
     private val onLongPress: (Video) -> Unit,
 ) : ListAdapter<Video, VideoAdapter.VH>(Diff) {
@@ -28,14 +31,31 @@ class VideoAdapter(
         var boundThumb: String? = null
     }
 
+    /** Forces thumbnails to reload, e.g. after toggling animated previews. */
+    fun reloadThumbs() = notifyItemRangeChanged(0, itemCount)
+
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) =
         VH(LayoutInflater.from(parent.context).inflate(R.layout.item_video, parent, false))
 
     override fun onBindViewHolder(h: VH, position: Int) {
         val v = getItem(position)
-        if (h.boundThumb != v.thumbnail) {
-            h.boundThumb = v.thumbnail
-            h.thumb.load(v.thumbnail) { crossfade(true) }
+        // Static cover first, then swap to TikTok's looping preview clip once it's ready.
+        val anim = if (animated()) v.animatedThumb else null
+        val key = "${v.thumbnail}|$anim"
+        if (h.boundThumb != key) {
+            h.boundThumb = key
+            h.thumb.load(v.thumbnail, imageLoader) {
+                crossfade(true)
+                listener(onSuccess = { _, _ ->
+                    if (anim != null && h.boundThumb == key) {
+                        val still = h.thumb.drawable
+                        h.thumb.load(anim, imageLoader) {
+                            placeholder(still)
+                            error(still)
+                        }
+                    }
+                })
+            }
         }
         h.tint.visibility = if (v.selected) View.VISIBLE else View.GONE
         h.check.visibility = if (v.selected) View.VISIBLE else View.GONE

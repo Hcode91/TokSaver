@@ -31,6 +31,11 @@ data class UiState(
 class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private val store = SavedStore(app)
+    private val listCache = ListCache(app)
+
+    var animatedPreviews: Boolean
+        get() = store.animatedPreviews
+        set(v) { store.animatedPreviews = v }
     private val _state = MutableStateFlow(UiState(username = store.lastUser))
     val state: StateFlow<UiState> = _state
 
@@ -100,22 +105,55 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         return s.removePrefix("@").substringBefore('/').substringBefore('?').trim()
     }
 
-    fun fetch(raw: String) {
+    /**
+     * Shows the cached list (if any) instantly, then checks TikTok.
+     * Normal refresh stops once it reaches videos we already have; [full] reloads everything.
+     */
+    fun fetch(raw: String, full: Boolean = false) {
         val user = cleanUsername(raw)
         if (user.isBlank() || _state.value.downloading) return
         fetchJob?.let { if (it.isActive) return }
         store.lastUser = user
 
+        val cached = if (full) null else listCache.load(user)
+        val cachedVideos = cached?.videos?.map { it.copy(saved = store.isSaved(it.id)) }.orEmpty()
+        val incremental = cachedVideos.isNotEmpty()
+        // Only stop at known videos if the cached list was a full one.
+        val cacheComplete = cached?.complete == true
         _state.update {
-            it.copy(username = user, videos = emptyList(), fetching = true, status = "Looking up @$user…")
+            it.copy(
+                username = user,
+                videos = cachedVideos,
+                fetching = true,
+                status = if (incremental) "${cachedVideos.size} cached videos · checking for new ones…"
+                else "Looking up @$user…",
+            )
         }
+
         fetchJob = viewModelScope.launch(Dispatchers.IO) {
             engineLock.withLock { } // wait for init/update to finish
             if (!_state.value.engineReady) {
                 _state.update { it.copy(fetching = false) }
                 return@launch
             }
-            val seen = HashSet<String>()
+            val knownIds = cachedVideos.map { it.id }.toHashSet()
+            val fetched = LinkedHashMap<String, Video>()
+            var newCount = 0
+            var knownInARow = 0
+            var reachedKnown = false
+
+            // Rebuild the list: fetched videos first (newest), then cached ones not re-seen.
+            fun publish(status: String) {
+                val rest = cachedVideos.filter { it.id !in fetched }
+                _state.update { st ->
+                    val prev = st.videos.associateBy { it.id }
+                    val merged = (fetched.values + rest).map { v ->
+                        prev[v.id]?.let { p -> v.copy(selected = p.selected, saved = p.saved, state = p.state) } ?: v
+                    }
+                    st.copy(videos = merged, status = status)
+                }
+            }
+
             val req = YoutubeDLRequest("https://www.tiktok.com/@$user").apply {
                 addOption("--flat-playlist")
                 addOption("--dump-json")
@@ -123,33 +161,58 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             try {
                 YoutubeDL.getInstance().execute(req, FETCH_ID) { _, _, line ->
-                    if (!line.startsWith("{")) return@execute
+                    if (!line.startsWith("{") || reachedKnown) return@execute
                     val v = Video.fromJson(line, user) ?: return@execute
-                    if (!seen.add(v.id)) return@execute
-                    val item = v.copy(saved = store.isSaved(v.id))
-                    _state.update {
-                        it.copy(videos = it.videos + item, status = "Loading… ${it.videos.size + 1} videos found")
+                    if (fetched.containsKey(v.id)) return@execute
+                    fetched[v.id] = v.copy(saved = store.isSaved(v.id))
+                    if (v.id in knownIds) knownInARow++ else { newCount++; knownInARow = 0 }
+                    publish(
+                        if (incremental) "Checking… $newCount new"
+                        else "Loading… ${fetched.size} videos found"
+                    )
+                    // Enough already-known videos in a row (beats pinned posts) = caught up.
+                    if (incremental && cacheComplete && knownInARow >= 12) {
+                        reachedKnown = true
+                        YoutubeDL.getInstance().destroyProcessById(FETCH_ID)
                     }
                 }
-                _state.update {
-                    it.copy(
-                        fetching = false,
-                        status = if (it.videos.isEmpty()) "No videos found for @$user"
-                        else "@$user · ${it.videos.size} videos · tap to select, long-press to open",
-                    )
-                }
+                finishFetch(
+                    user,
+                    if (fetched.isEmpty() && !incremental) "No videos found for @$user" else null,
+                    newCount, incremental,
+                    complete = if (reachedKnown) cacheComplete else true,
+                )
             } catch (e: YoutubeDL.CanceledException) {
-                _state.update { it.copy(fetching = false, status = "Stopped · ${it.videos.size} videos loaded") }
+                finishFetch(
+                    user, if (reachedKnown) null else "Stopped", newCount, incremental,
+                    complete = reachedKnown && cacheComplete,
+                )
             } catch (e: Exception) {
                 val msg = friendlyError(e.message)
-                _state.update {
-                    it.copy(
-                        fetching = false,
-                        status = if (it.videos.isEmpty()) "Couldn't load @$user: $msg"
-                        else "Loaded ${it.videos.size} videos (stopped early: $msg)",
-                    )
-                }
+                finishFetch(
+                    user,
+                    if (_state.value.videos.isEmpty()) "Couldn't load @$user: $msg" else "Stopped early: $msg",
+                    newCount, incremental, complete = false,
+                )
             }
+        }
+    }
+
+    private fun finishFetch(
+        user: String, problem: String?, newCount: Int, incremental: Boolean, complete: Boolean,
+    ) {
+        val videos = _state.value.videos
+        listCache.save(user, videos, complete)
+        _state.update {
+            it.copy(
+                fetching = false,
+                status = buildString {
+                    append("@$user · ${videos.size} videos")
+                    if (incremental) append(" · $newCount new")
+                    if (problem != null) append(" · $problem")
+                    else append(" · tap to select, long-press to open")
+                },
+            )
         }
     }
 

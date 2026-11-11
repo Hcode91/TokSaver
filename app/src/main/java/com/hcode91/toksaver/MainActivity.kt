@@ -26,6 +26,8 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.textfield.TextInputEditText
+import coil.ImageLoader
+import coil.decode.ImageDecoderDecoder
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
@@ -39,7 +41,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var fab: ExtendedFloatingActionButton
     private lateinit var toolbar: MaterialToolbar
 
-    private val adapter = VideoAdapter(
+    private val imageLoader by lazy {
+        ImageLoader.Builder(this)
+            .components { add(ImageDecoderDecoder.Factory()) } // animated webp previews
+            .crossfade(true)
+            .build()
+    }
+
+    private val adapter by lazy { VideoAdapter(
+        imageLoader = imageLoader,
+        animated = { vm.animatedPreviews },
         onTap = { v ->
             val st = v.state
             if (st is DlState.Failed && !vm.state.value.downloading) {
@@ -53,7 +64,7 @@ class MainActivity : AppCompatActivity() {
             vm.toggle(v.id)
         },
         onLongPress = { v -> open(v) },
-    )
+    ) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -87,8 +98,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         toolbar.inflateMenu(R.menu.main)
+        toolbar.menu.findItem(R.id.action_animated).isChecked = vm.animatedPreviews
         toolbar.setOnMenuItemClickListener {
             when (it.itemId) {
+                R.id.action_full_reload -> {
+                    val u = vm.state.value.username.ifBlank { input.text?.toString().orEmpty() }
+                    if (u.isNotBlank()) vm.fetch(u, full = true)
+                }
+                R.id.action_animated -> {
+                    vm.animatedPreviews = !vm.animatedPreviews
+                    it.isChecked = vm.animatedPreviews
+                    adapter.reloadThumbs()
+                }
                 R.id.action_select_all -> vm.selectAll()
                 R.id.action_select_new -> vm.selectNew()
                 R.id.action_clear -> vm.clearSelection()
