@@ -6,6 +6,8 @@
     <item android:id="@+id/action_select_all" android:title="Select all" app:showAsAction="never" />
     <item android:id="@+id/action_select_new" android:title="Select not yet downloaded" app:showAsAction="never" />
     <item android:id="@+id/action_clear" android:title="Clear selection" app:showAsAction="never" />
+    <item android:id="@+id/action_ig_login" android:title="Instagram sign in" app:showAsAction="never" />
+    <item android:id="@+id/action_ig_logout" android:title="Instagram sign out" app:showAsAction="never" />
     <item android:id="@+id/action_update" android:title="Update engine (stable)" app:showAsAction="never" />
     <item android:id="@+id/action_update_nightly" android:title="Update engine (nightly)" app:showAsAction="never" />
 </menu>

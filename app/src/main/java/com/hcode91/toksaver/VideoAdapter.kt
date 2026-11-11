@@ -31,6 +31,10 @@ class VideoAdapter(
         var boundThumb: String? = null
     }
 
+    /** Tile shape for the current platform. */
+    var platform: Platform = Platform.TIKTOK
+        set(v) { if (field != v) { field = v; notifyDataSetChanged() } }
+
     /** Forces thumbnails to reload, e.g. after toggling animated previews. */
     fun reloadThumbs() = notifyItemRangeChanged(0, itemCount)
 
@@ -39,6 +43,11 @@ class VideoAdapter(
 
     override fun onBindViewHolder(h: VH, position: Int) {
         val v = getItem(position)
+        (h.itemView as AspectFrame).apply {
+            if (ratioW != platform.aspectW || ratioH != platform.aspectH) {
+                ratioW = platform.aspectW; ratioH = platform.aspectH; requestLayout()
+            }
+        }
         // Static cover first, then swap to TikTok's looping preview clip once it's ready.
         val anim = if (animated()) v.animatedThumb else null
         val key = "${v.thumbnail}|$anim"
@@ -61,8 +70,13 @@ class VideoAdapter(
         h.check.visibility = if (v.selected) View.VISIBLE else View.GONE
         h.saved.visibility = if (v.saved && v.state !is DlState.Running) View.VISIBLE else View.GONE
         h.views.text = v.views?.let { "▶ " + compact(it) } ?: ""
-        h.duration.text = v.duration?.let { "%d:%02d".format(it / 60, it % 60) } ?: ""
-        h.duration.visibility = if (v.duration != null) View.VISIBLE else View.GONE
+        h.duration.text = when {
+            v.media.size > 1 -> "▣ ${v.media.size}"          // carousel
+            v.isPhotoOnly -> "Photo"
+            v.duration != null -> "%d:%02d".format(v.duration / 60, v.duration % 60)
+            else -> ""
+        }
+        h.duration.visibility = if (h.duration.text.isNotEmpty()) View.VISIBLE else View.GONE
 
         when (val st = v.state) {
             is DlState.Running -> {

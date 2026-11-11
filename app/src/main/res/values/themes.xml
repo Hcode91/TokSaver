@@ -11,4 +11,6 @@
         <item name="android:statusBarColor">#0E0F13</item>
         <item name="android:navigationBarColor">#0E0F13</item>
     </style>
+
+    <style name="Theme.TokSaver.Login" parent="Theme.Material3.Dark" />
 </resources>

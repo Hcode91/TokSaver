@@ -1,8 +1,10 @@
 # TokSaver
 
-Android app: enter a TikTok username, browse all of that profile's public videos, pick some (or all) and save them to your phone.
+Android app: pick a platform (TikTok, YouTube, YouTube Shorts or Instagram), enter a username, browse everything they've posted, pick some (or all) and save them to your phone.
 
-- Videos save to `Movies/TikTok/<username>/` and show up in your gallery.
+- Videos save to `Movies/<Platform>/<username>/` and photos to `Pictures/<Platform>/<username>/`. Both show up in your gallery.
+- **YouTube**: enter a channel's @handle or a channel link. Videos download at up to 1080p as MP4.
+- **Instagram**: sign in once via ⋮ → **Instagram sign in**. The session stays on your phone. Photos, Reels and carousel posts (all items) are supported. Private accounts only work if you follow them.
 - **Tap** a video to select it. **Long-press** to open it in TikTok.
 - The ⋮ menu lets you select all, select only videos you haven't downloaded yet, or clear the selection.
 - Videos you've already saved get a **Saved** badge.

@@ -28,6 +28,7 @@ object FrameExtractor {
     fun extract(
         context: Context,
         file: File,
+        folder: String,
         username: String,
         videoId: String,
         mode: FrameMode,
@@ -44,7 +45,7 @@ object FrameExtractor {
             val frameCount = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)
                 ?.toIntOrNull() ?: 0
 
-            val relPath = "${Environment.DIRECTORY_PICTURES}/TikTok/$username/$videoId"
+            val relPath = "${Environment.DIRECTORY_PICTURES}/$folder/$username/$videoId"
             var saved = 0
             var index = 0
             fun handle(bmp: Bitmap) {

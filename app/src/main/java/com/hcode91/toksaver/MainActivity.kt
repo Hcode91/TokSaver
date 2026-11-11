@@ -8,6 +8,10 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.RadioButton
+import androidx.activity.result.contract.ActivityResultContracts
+import com.google.android.material.chip.Chip
+import com.google.android.material.chip.ChipGroup
+import com.google.android.material.textfield.TextInputLayout
 import android.widget.RadioGroup
 import android.widget.TextView
 import com.google.android.material.checkbox.MaterialCheckBox
@@ -40,6 +44,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var busy: LinearProgressIndicator
     private lateinit var fab: ExtendedFloatingActionButton
     private lateinit var toolbar: MaterialToolbar
+    private lateinit var grid: RecyclerView
+    private lateinit var userLayout: TextInputLayout
+    private var shownPlatform: Platform? = null
+
+    // After signing in to Instagram, carry on with the fetch.
+    private val igLogin = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        if (InstagramClient.isSignedIn()) {
+            status.text = "Signed in to Instagram"
+            if (vm.state.value.platform == Platform.INSTAGRAM && !input.text.isNullOrBlank()) doFetch()
+        }
+    }
 
     private val imageLoader by lazy {
         ImageLoader.Builder(this)
@@ -58,7 +73,7 @@ class MainActivity : AppCompatActivity() {
                     .setTitle("Download failed")
                     .setMessage(st.reason)
                     .setPositiveButton("OK", null)
-                    .setNeutralButton("Open in TikTok") { _, _ -> open(v) }
+                    .setNeutralButton("Open original") { _, _ -> open(v) }
                     .show()
             }
             vm.toggle(v.id)
@@ -77,8 +92,30 @@ class MainActivity : AppCompatActivity() {
         busy = findViewById(R.id.busy)
         fab = findViewById(R.id.downloadFab)
 
-        val grid = findViewById<RecyclerView>(R.id.grid)
+        userLayout = findViewById(R.id.userLayout)
+        grid = findViewById(R.id.grid)
         grid.layoutManager = GridLayoutManager(this, 3)
+
+        val chips = findViewById<ChipGroup>(R.id.platforms)
+        Platform.entries.forEach { p ->
+            chips.addView(Chip(this).apply {
+                id = 2000 + p.ordinal
+                text = p.label
+                isCheckable = true
+                isChecked = p == vm.state.value.platform
+            })
+        }
+        chips.setOnCheckedStateChangeListener { group, ids ->
+            val p = Platform.entries.getOrNull((ids.firstOrNull() ?: return@setOnCheckedStateChangeListener) - 2000)
+                ?: return@setOnCheckedStateChangeListener
+            val st = vm.state.value
+            if (st.fetching || st.downloading) {
+                group.check(2000 + st.platform.ordinal) // don't switch mid-job
+                return@setOnCheckedStateChangeListener
+            }
+            vm.setPlatform(p)
+            input.setText(vm.state.value.username)
+        }
         grid.adapter = adapter
         (grid.itemAnimator as? SimpleItemAnimator)?.supportsChangeAnimations = false
 
@@ -110,6 +147,11 @@ class MainActivity : AppCompatActivity() {
                     it.isChecked = vm.animatedPreviews
                     adapter.reloadThumbs()
                 }
+                R.id.action_ig_login -> igLogin.launch(Intent(this, InstagramLoginActivity::class.java))
+                R.id.action_ig_logout -> {
+                    InstagramClient.signOut()
+                    status.text = "Signed out of Instagram"
+                }
                 R.id.action_select_all -> vm.selectAll()
                 R.id.action_select_new -> vm.selectNew()
                 R.id.action_clear -> vm.clearSelection()
@@ -131,13 +173,17 @@ class MainActivity : AppCompatActivity() {
         handleShare(intent)
     }
 
-    /** Lets you share a profile link from TikTok straight into the app. */
+    /** Lets you share a profile link from TikTok / YouTube / Instagram straight into the app. */
     private fun handleShare(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
         val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
-        val user = Regex("tiktok\\.com/@([\\w.-]+)").find(text)?.groupValues?.get(1) ?: return
+        val p = Platform.fromLink(text) ?: return
+        val user = p.cleanUser(text).takeIf { it.isNotBlank() } ?: return
+        if (vm.state.value.fetching || vm.state.value.downloading) return
+        vm.setPlatform(p)
+        findViewById<ChipGroup>(R.id.platforms).check(2000 + p.ordinal)
         input.setText(user)
-        vm.fetch(user)
+        doFetch()
     }
 
     private fun doFetch() {
@@ -146,6 +192,11 @@ class MainActivity : AppCompatActivity() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(input.windowToken, 0)
         input.clearFocus()
+        if (vm.state.value.platform == Platform.INSTAGRAM && !InstagramClient.isSignedIn()) {
+            status.text = "Sign in to Instagram to continue"
+            igLogin.launch(Intent(this, InstagramLoginActivity::class.java))
+            return
+        }
         vm.fetch(text)
     }
 
@@ -209,6 +260,12 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render(s: UiState) {
+        if (shownPlatform != s.platform) {
+            shownPlatform = s.platform
+            (grid.layoutManager as GridLayoutManager).spanCount = s.platform.columns
+            adapter.platform = s.platform
+            userLayout.hint = s.platform.hint
+        }
         adapter.submitList(s.videos)
 
         toolbar.subtitle = s.engineVersion?.let { "engine $it" }

@@ -3,6 +3,7 @@ package com.hcode91.toksaver
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yausername.ffmpeg.FFmpeg
 import com.yausername.youtubedl_android.YoutubeDL
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,7 @@ data class UiState(
     val engineVersion: String? = null,
     val busyText: String? = null,     // non-null = show spinner + this text
     val status: String = "",
+    val platform: Platform = Platform.TIKTOK,
     val username: String = "",
     val videos: List<Video> = emptyList(),
     val fetching: Boolean = false,
@@ -36,13 +38,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     var animatedPreviews: Boolean
         get() = store.animatedPreviews
         set(v) { store.animatedPreviews = v }
-    private val _state = MutableStateFlow(UiState(username = store.lastUser))
+    private val ig = InstagramClient(app)
+    private val _state = MutableStateFlow(
+        UiState(platform = store.platform, username = store.lastUser(store.platform))
+    )
     val state: StateFlow<UiState> = _state
 
     private val engineLock = Mutex()
     private var fetchJob: Job? = null
     private var downloadJob: Job? = null
     @Volatile private var cancelDownloads = false
+    @Volatile private var stopFetchFlag = false
 
     init {
         viewModelScope.launch(Dispatchers.IO) {
@@ -50,6 +56,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _state.update { it.copy(busyText = "Preparing engine… (first launch takes a few seconds)") }
                 try {
                     YoutubeDL.getInstance().init(app)
+                    // ffmpeg merges YouTube's separate video + audio streams.
+                    try { FFmpeg.getInstance().init(app) } catch (_: Exception) { }
                     _state.update { it.copy(engineReady = true, engineVersion = YoutubeDL.getInstance().versionName(app)) }
                 } catch (e: Exception) {
                     _state.update { it.copy(busyText = null, status = "Engine failed to start: ${e.message}") }
@@ -98,11 +106,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Accepts "name", "@name" or a full profile / share link. */
-    private fun cleanUsername(raw: String): String {
-        val s = raw.trim()
-        Regex("tiktok\\.com/@([\\w.-]+)").find(s)?.let { return it.groupValues[1] }
-        return s.removePrefix("@").substringBefore('/').substringBefore('?').trim()
+    /** Switch platform; shows that platform's last username. */
+    fun setPlatform(p: Platform) {
+        val st = _state.value
+        if (st.platform == p || st.fetching || st.downloading) return
+        store.platform = p
+        _state.update {
+            it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "")
+        }
     }
 
     /**
@@ -110,13 +121,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Normal refresh stops once it reaches videos we already have; [full] reloads everything.
      */
     fun fetch(raw: String, full: Boolean = false) {
-        val user = cleanUsername(raw)
+        val platform = _state.value.platform
+        val user = platform.cleanUser(raw)
         if (user.isBlank() || _state.value.downloading) return
         fetchJob?.let { if (it.isActive) return }
-        store.lastUser = user
+        store.setLastUser(platform, user)
+        stopFetchFlag = false
 
-        val cached = if (full) null else listCache.load(user)
-        val cachedVideos = cached?.videos?.map { it.copy(saved = store.isSaved(it.id)) }.orEmpty()
+        val cached = if (full) null else listCache.load(platform, user)
+        val cachedVideos = cached?.videos?.map { it.copy(saved = store.isSaved(platform.key(it.id))) }.orEmpty()
         val incremental = cachedVideos.isNotEmpty()
         // Only stop at known videos if the cached list was a full one.
         val cacheComplete = cached?.complete == true
@@ -132,7 +145,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         fetchJob = viewModelScope.launch(Dispatchers.IO) {
             engineLock.withLock { } // wait for init/update to finish
-            if (!_state.value.engineReady) {
+            if (!_state.value.engineReady && platform != Platform.INSTAGRAM) {
                 _state.update { it.copy(fetching = false) }
                 return@launch
             }
@@ -154,31 +167,40 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
 
-            val req = YoutubeDLRequest("https://www.tiktok.com/@$user").apply {
-                addOption("--flat-playlist")
-                addOption("--dump-json")
-                addOption("--ignore-errors")
+            // Handles one listed item; returns false once we've caught up with the cache.
+            fun onItem(v: Video): Boolean {
+                if (reachedKnown) return false
+                if (fetched.containsKey(v.id)) return true
+                fetched[v.id] = v.copy(saved = store.isSaved(platform.key(v.id)))
+                if (v.id in knownIds) knownInARow++ else { newCount++; knownInARow = 0 }
+                publish(
+                    if (incremental) "Checking… $newCount new"
+                    else "Loading… ${fetched.size} found"
+                )
+                // Enough already-known posts in a row (beats pinned posts) = caught up.
+                if (incremental && cacheComplete && knownInARow >= 12) reachedKnown = true
+                return !reachedKnown
             }
+
             try {
-                YoutubeDL.getInstance().execute(req, FETCH_ID) { _, _, line ->
-                    if (!line.startsWith("{") || reachedKnown) return@execute
-                    val v = Video.fromJson(line, user) ?: return@execute
-                    if (fetched.containsKey(v.id)) return@execute
-                    fetched[v.id] = v.copy(saved = store.isSaved(v.id))
-                    if (v.id in knownIds) knownInARow++ else { newCount++; knownInARow = 0 }
-                    publish(
-                        if (incremental) "Checking… $newCount new"
-                        else "Loading… ${fetched.size} videos found"
-                    )
-                    // Enough already-known videos in a row (beats pinned posts) = caught up.
-                    if (incremental && cacheComplete && knownInARow >= 12) {
-                        reachedKnown = true
-                        YoutubeDL.getInstance().destroyProcessById(FETCH_ID)
+                if (platform == Platform.INSTAGRAM) {
+                    ig.listPosts(user) { v -> !stopFetchFlag && onItem(v) }
+                    if (stopFetchFlag && !reachedKnown) throw YoutubeDL.CanceledException()
+                } else {
+                    val req = YoutubeDLRequest(platform.listUrl(user)).apply {
+                        addOption("--flat-playlist")
+                        addOption("--dump-json")
+                        addOption("--ignore-errors")
+                    }
+                    YoutubeDL.getInstance().execute(req, FETCH_ID) { _, _, line ->
+                        if (!line.startsWith("{") || reachedKnown) return@execute
+                        val v = Video.fromJson(line, user, platform) ?: return@execute
+                        if (!onItem(v)) YoutubeDL.getInstance().destroyProcessById(FETCH_ID)
                     }
                 }
                 finishFetch(
                     user,
-                    if (fetched.isEmpty() && !incremental) "No videos found for @$user" else null,
+                    if (fetched.isEmpty() && !incremental) "Nothing found for @$user" else null,
                     newCount, incremental,
                     complete = if (reachedKnown) cacheComplete else true,
                 )
@@ -202,12 +224,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         user: String, problem: String?, newCount: Int, incremental: Boolean, complete: Boolean,
     ) {
         val videos = _state.value.videos
-        listCache.save(user, videos, complete)
+        listCache.save(_state.value.platform, user, videos, complete)
         _state.update {
             it.copy(
                 fetching = false,
                 status = buildString {
-                    append("@$user · ${videos.size} videos")
+                    append("@$user · ${videos.size} posts")
                     if (incremental) append(" · $newCount new")
                     if (problem != null) append(" · $problem")
                     else append(" · tap to select, long-press to open")
@@ -217,6 +239,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun stopFetch() {
+        stopFetchFlag = true
         YoutubeDL.getInstance().destroyProcessById(FETCH_ID)
     }
 
@@ -250,6 +273,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lastFrameMode = frameMode
         lastPersonFilter = personFilter
         val user = s.username
+        val platform = s.platform
         cancelDownloads = false
         queue.forEach { q -> setVideo(q.id) { it.copy(state = DlState.Queued) } }
         _state.update { it.copy(downloading = true) }
@@ -260,6 +284,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var ok = 0
             var failed = 0
             var framesSaved = 0
+            var photosOrVideos = 0
+            var photos = 0
             var detectorError: String? = null
             val detector = if (frameMode != FrameMode.NONE && personFilter.enabled) {
                 try {
@@ -276,32 +302,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 workDir.deleteRecursively()
                 workDir.mkdirs()
                 try {
-                    val req = YoutubeDLRequest(v.url).apply {
-                        // H.264 plays everywhere; fall back to whatever is best.
-                        addOption("-f", "b[vcodec=h264]/b[vcodec^=avc]/b")
-                        addOption("-o", "${workDir.absolutePath}/%(id)s.%(ext)s")
-                        addOption("--no-playlist")
-                        addOption("--no-mtime")
-                        addOption("--no-part")
-                    }
-                    YoutubeDL.getInstance().execute(req, DL_ID) { p, _, _ ->
-                        val pct = p.toInt().coerceIn(0, 100)
-                        setVideo(v.id) {
-                            val cur = it.state
-                            if (cur is DlState.Running && cur.percent == pct) it
-                            else it.copy(state = DlState.Running(pct))
-                        }
-                    }
-                    val file = workDir.listFiles()?.filter { it.isFile }?.maxByOrNull { it.length() }
-                        ?: throw IllegalStateException("No file produced")
-                    if (!MediaSaver.isVideo(file)) throw IllegalStateException("Photo post (not supported)")
-                    MediaSaver.saveToMovies(app, file, user, v)
-                    store.markSaved(v.id)
-                    if (frameMode != FrameMode.NONE) {
+                    // Pull out frames from a saved video, if asked for.
+                    fun frames(file: File, frameId: String) {
+                        if (frameMode == FrameMode.NONE) return
                         setVideo(v.id) { it.copy(state = DlState.Running(0, frames = true)) }
                         var lastPct = -1
                         framesSaved += FrameExtractor.extract(
-                            app, file, user, v.id, frameMode,
+                            app, file, platform.folder, user, frameId, frameMode,
                             cancelled = { cancelDownloads },
                             keep = detector?.let { it::hasPerson },
                         ) { pct ->
@@ -311,6 +318,70 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             }
                         }
                     }
+
+                    if (platform == Platform.INSTAGRAM) {
+                        var post = v
+                        var refreshed = false
+                        val many = v.media.size > 1
+                        var idx = 0
+                        while (idx < post.media.size) {
+                            if (cancelDownloads) throw YoutubeDL.CanceledException()
+                            val item = post.media[idx]
+                            val suffix = if (many) "_${idx + 1}" else ""
+                            val file = try {
+                                ig.download(item, workDir, "${v.id}$suffix") { pct ->
+                                    val overall = (idx * 100 + pct) / post.media.size
+                                    setVideo(v.id) { it.copy(state = DlState.Running(overall)) }
+                                }
+                            } catch (e: InstagramClient.ExpiredLink) {
+                                // Cached links go stale; fetch fresh ones once and retry.
+                                if (refreshed) throw InstagramException("Instagram link expired")
+                                post = ig.refreshPost(v.id) ?: throw InstagramException("Post no longer available")
+                                refreshed = true
+                                continue
+                            }
+                            if (item.isVideo) {
+                                MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
+                                photosOrVideos++
+                                frames(file, "${v.id}$suffix")
+                            } else {
+                                MediaSaver.saveImage(app, file, platform.folder, user, v, suffix)
+                                photos++
+                            }
+                            file.delete()
+                            idx++
+                        }
+                    } else {
+                        val req = YoutubeDLRequest(v.url).apply {
+                            if (platform == Platform.TIKTOK) {
+                                // H.264 plays everywhere; fall back to whatever is best.
+                                addOption("-f", "b[vcodec=h264]/b[vcodec^=avc]/b")
+                            } else {
+                                // YouTube: up to 1080p H.264 + AAC, merged to MP4 by ffmpeg.
+                                addOption("-f", "bv*[height<=1080][vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4]/bv*+ba/b")
+                                addOption("--merge-output-format", "mp4")
+                            }
+                            addOption("-o", "${workDir.absolutePath}/%(id)s.%(ext)s")
+                            addOption("--no-playlist")
+                            addOption("--no-mtime")
+                            addOption("--no-part")
+                        }
+                        YoutubeDL.getInstance().execute(req, DL_ID) { p, _, _ ->
+                            val pct = p.toInt().coerceIn(0, 100)
+                            setVideo(v.id) {
+                                val cur = it.state
+                                if (cur is DlState.Running && cur.percent == pct) it
+                                else it.copy(state = DlState.Running(pct))
+                            }
+                        }
+                        val file = workDir.listFiles()?.filter { it.isFile }?.maxByOrNull { it.length() }
+                            ?: throw IllegalStateException("No file produced")
+                        if (!MediaSaver.isVideo(file)) throw IllegalStateException("Photo post (not supported)")
+                        MediaSaver.saveToMovies(app, file, platform.folder, user, v)
+                        photosOrVideos++
+                        frames(file, v.id)
+                    }
+                    store.markSaved(platform.key(v.id))
                     setVideo(v.id) { it.copy(state = DlState.Done, saved = true, selected = false) }
                     ok++
                 } catch (e: YoutubeDL.CanceledException) {
@@ -329,8 +400,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     downloading = false,
                     videos = st.videos.map { if (it.state is DlState.Queued) it.copy(state = DlState.Idle) else it },
                     status = buildString {
-                        append("Saved $ok to Movies/TikTok/$user")
-                        if (framesSaved > 0) append(" · $framesSaved frames to Pictures/TikTok/$user")
+                        append("Done $ok")
+                        if (photosOrVideos > 0) append(" · $photosOrVideos videos → Movies/${platform.folder}/$user")
+                        if (photos > 0) append(" · $photos photos → Pictures/${platform.folder}/$user")
+                        if (framesSaved > 0) append(" · $framesSaved frames")
                         if (detector != null) append(" (people only)")
                         detectorError?.let { append(" · person filter off: $it") }
                         if (failed > 0) append(" · $failed failed")
