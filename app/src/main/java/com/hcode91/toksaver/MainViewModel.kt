@@ -171,11 +171,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { s -> s.copy(videos = s.videos.map { if (it.id == id) f(it) else it }) }
     }
 
-    fun startDownloads() {
+    var lastFrameMode: FrameMode
+        get() = store.frameMode
+        set(v) { store.frameMode = v }
+
+    fun startDownloads(frameMode: FrameMode) {
         val s = _state.value
         if (s.downloading || s.fetching) return
         val queue = s.videos.filter { it.selected }
         if (queue.isEmpty()) return
+        lastFrameMode = frameMode
         val user = s.username
         cancelDownloads = false
         queue.forEach { q -> setVideo(q.id) { it.copy(state = DlState.Queued) } }
@@ -186,6 +191,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             val workDir = File(app.cacheDir, "dl")
             var ok = 0
             var failed = 0
+            var framesSaved = 0
             for ((i, v) in queue.withIndex()) {
                 if (cancelDownloads) break
                 _state.update { it.copy(status = "Downloading ${i + 1} of ${queue.size}…") }
@@ -214,6 +220,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     if (!MediaSaver.isVideo(file)) throw IllegalStateException("Photo post (not supported)")
                     MediaSaver.saveToMovies(app, file, user, v)
                     store.markSaved(v.id)
+                    if (frameMode != FrameMode.NONE) {
+                        setVideo(v.id) { it.copy(state = DlState.Running(0, frames = true)) }
+                        var lastPct = -1
+                        framesSaved += FrameExtractor.extract(
+                            app, file, user, v.id, frameMode,
+                            cancelled = { cancelDownloads },
+                        ) { pct ->
+                            if (pct != lastPct) {
+                                lastPct = pct
+                                setVideo(v.id) { it.copy(state = DlState.Running(pct, frames = true)) }
+                            }
+                        }
+                    }
                     setVideo(v.id) { it.copy(state = DlState.Done, saved = true, selected = false) }
                     ok++
                 } catch (e: YoutubeDL.CanceledException) {
@@ -232,6 +251,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     videos = st.videos.map { if (it.state is DlState.Queued) it.copy(state = DlState.Idle) else it },
                     status = buildString {
                         append("Saved $ok to Movies/TikTok/$user")
+                        if (framesSaved > 0) append(" · $framesSaved frames to Pictures/TikTok/$user")
                         if (failed > 0) append(" · $failed failed")
                         if (cancelDownloads) append(" · cancelled")
                     },

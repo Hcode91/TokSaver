@@ -79,7 +79,7 @@ class MainActivity : AppCompatActivity() {
             if (id == EditorInfo.IME_ACTION_SEARCH) { doFetch(); true } else false
         }
         fab.setOnClickListener {
-            if (vm.state.value.downloading) vm.cancelDownloads() else vm.startDownloads()
+            if (vm.state.value.downloading) vm.cancelDownloads() else askFrameMode()
         }
 
         toolbar.inflateMenu(R.menu.main)
@@ -122,6 +122,21 @@ class MainActivity : AppCompatActivity() {
             .hideSoftInputFromWindow(input.windowToken, 0)
         input.clearFocus()
         vm.fetch(text)
+    }
+
+    /** Before downloading, ask whether to also cut each video into images. */
+    private fun askFrameMode() {
+        val modes = FrameMode.entries
+        var chosen = modes.indexOf(vm.lastFrameMode).coerceAtLeast(0)
+        val n = vm.state.value.selectedCount
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Download $n video${if (n == 1) "" else "s"}")
+            .setSingleChoiceItems(modes.map { it.label }.toTypedArray(), chosen) { _, which ->
+                chosen = which
+            }
+            .setPositiveButton("Download") { _, _ -> vm.startDownloads(modes[chosen]) }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun open(v: Video) {

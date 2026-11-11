@@ -9,7 +9,7 @@ import org.json.JSONObject
 sealed class DlState {
     data object Idle : DlState()
     data object Queued : DlState()
-    data class Running(val percent: Int) : DlState()
+    data class Running(val percent: Int, val frames: Boolean = false) : DlState()
     data object Done : DlState()
     data class Failed(val reason: String) : DlState()
 }
@@ -72,6 +72,11 @@ class SavedStore(context: Context) {
     var lastUser: String
         get() = prefs.getString("__last_user", "") ?: ""
         set(v) = prefs.edit().putString("__last_user", v).apply()
+
+    var frameMode: FrameMode
+        get() = runCatching { FrameMode.valueOf(prefs.getString("__frame_mode", "NONE")!!) }
+            .getOrDefault(FrameMode.NONE)
+        set(v) = prefs.edit().putString("__frame_mode", v.name).apply()
 
     var lastUpdate: Long
         get() = prefs.getLong("__last_update", 0L)

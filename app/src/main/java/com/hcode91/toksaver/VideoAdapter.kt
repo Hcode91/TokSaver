@@ -49,7 +49,7 @@ class VideoAdapter(
                 h.progress.visibility = View.VISIBLE
                 h.progress.setProgressCompat(st.percent, true)
                 h.stateText.visibility = View.VISIBLE
-                h.stateText.text = "${st.percent}%"
+                h.stateText.text = if (st.frames) "Frames ${st.percent}%" else "${st.percent}%"
             }
             DlState.Queued -> {
                 h.progress.visibility = View.GONE
