@@ -204,7 +204,9 @@ class InstagramClient(private val context: Context) {
      * Downloads one file into [dir]. Returns the file; throws [ExpiredLink] on 403/404/410
      * so the caller can refresh the post and retry.
      */
-    fun download(item: MediaItem, dir: File, baseName: String, onProgress: (Int) -> Unit): File {
+    fun download(
+        item: MediaItem, dir: File, baseName: String, maxBytesPerSec: Long = 0, onProgress: (Int) -> Unit,
+    ): File {
         val c = URL(item.url).openConnection() as HttpURLConnection
         c.connectTimeout = 15000
         c.readTimeout = 30000
@@ -213,6 +215,7 @@ class InstagramClient(private val context: Context) {
         try {
             val code = c.responseCode
             if (code == 403 || code == 404 || code == 410) throw ExpiredLink()
+            if (code == 429) throw InstagramException("429 Too Many Requests")
             if (code !in 200..299) throw InstagramException("Download failed ($code)")
             val type = c.contentType.orEmpty()
             val ext = when {
@@ -225,6 +228,7 @@ class InstagramClient(private val context: Context) {
             val out = File(dir, "$baseName.$ext")
             val total = c.contentLengthLong
             var done = 0L
+            val started = System.currentTimeMillis()
             c.inputStream.use { input ->
                 out.outputStream().use { output ->
                     val buf = ByteArray(64 * 1024)
@@ -234,6 +238,12 @@ class InstagramClient(private val context: Context) {
                         output.write(buf, 0, n)
                         done += n
                         if (total > 0) onProgress((done * 100 / total).toInt())
+                        // Speed cap: sleep if we're ahead of the allowed rate.
+                        if (maxBytesPerSec > 0) {
+                            val allowedMs = done * 1000 / maxBytesPerSec
+                            val ahead = allowedMs - (System.currentTimeMillis() - started)
+                            if (ahead > 0) Thread.sleep(ahead)
+                        }
                     }
                 }
             }

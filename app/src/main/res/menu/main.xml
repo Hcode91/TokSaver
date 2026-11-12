@@ -3,6 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item android:id="@+id/action_full_reload" android:title="Full reload (ignore cache)" app:showAsAction="never" />
     <item android:id="@+id/action_animated" android:title="Animated previews" android:checkable="true" app:showAsAction="never" />
+    <item android:id="@+id/action_pace" android:title="Download pace…" app:showAsAction="never" />
     <item android:id="@+id/action_select_all" android:title="Select all" app:showAsAction="never" />
     <item android:id="@+id/action_select_new" android:title="Select not yet downloaded" app:showAsAction="never" />
     <item android:id="@+id/action_clear" android:title="Clear selection" app:showAsAction="never" />

@@ -322,6 +322,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         lastPersonFilter = personFilter
         lastGifOptions = gifs
         lastDeleteOriginal = deleteOriginal
+        val pace = store.pace
         val processing = frameMode != FrameMode.NONE || gifs.enabled
         val dropVideo = processing && deleteOriginal
         val user = s.username
@@ -350,8 +351,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     null
                 }
             } else null
-            for ((i, v) in queue.withIndex()) {
+            queue@ for ((i, v) in queue.withIndex()) {
                 if (cancelDownloads) break
+                // Pause between downloads so we don't hammer the servers.
+                if (i > 0 && !waitFor(pace.pauseMs(), "Pausing before next download")) break
+                var attempt = 0
+                retry@ while (true) {
                 _state.update { it.copy(status = "Downloading ${i + 1} of ${queue.size}…") }
                 setVideo(v.id) { it.copy(state = DlState.Running(0)) }
                 workDir.deleteRecursively()
@@ -418,7 +423,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             val item = post.media[idx]
                             val suffix = if (many) "_${idx + 1}" else ""
                             val file = try {
-                                ig.download(item, workDir, "${v.id}$suffix") { pct ->
+                                ig.download(item, workDir, "${v.id}$suffix", pace.bytesPerSec) { pct ->
                                     val overall = (idx * 100 + pct) / post.media.size
                                     setVideo(v.id) { it.copy(state = DlState.Running(overall)) }
                                 }
@@ -452,6 +457,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             addOption("--no-playlist")
                             addOption("--no-mtime")
                             addOption("--no-part")
+                            pace.limitRate?.let { addOption("--limit-rate", it) }
+                            addOption("--retries", "3")
                         }
                         YoutubeDL.getInstance().execute(req, DL_ID) { p, _, _ ->
                             val pct = p.toInt().coerceIn(0, 100)
@@ -469,12 +476,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     store.markSaved(platform.key(v.id))
                     setVideo(v.id) { it.copy(state = DlState.Done, saved = true, selected = false) }
                     ok++
+                    break@retry
                 } catch (e: YoutubeDL.CanceledException) {
                     setVideo(v.id) { it.copy(state = DlState.Idle) }
-                    break
+                    break@queue
                 } catch (e: Exception) {
+                    // Server says slow down: back off for a minute, then try once more.
+                    if (isRateLimited(e.message) && attempt++ == 0) {
+                        setVideo(v.id) { it.copy(state = DlState.Queued) }
+                        if (waitFor(60_000, "Server asked us to slow down · waiting")) continue@retry
+                        break@queue
+                    }
                     setVideo(v.id) { it.copy(state = DlState.Failed(friendlyError(e.message))) }
                     failed++
+                    break@retry
+                }
                 }
             }
             workDir.deleteRecursively()
@@ -500,6 +516,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
         }
+    }
+
+    var pace: DownloadPace
+        get() = store.pace
+        set(v) { store.pace = v }
+
+    /** Waits [ms], showing a countdown; returns false if downloads were cancelled meanwhile. */
+    private suspend fun waitFor(ms: Long, label: String): Boolean {
+        val end = System.currentTimeMillis() + ms
+        while (true) {
+            if (cancelDownloads) return false
+            val left = end - System.currentTimeMillis()
+            if (left <= 0) return true
+            if (ms >= 1500) _state.update { it.copy(status = "$label… ${(left + 999) / 1000}s") }
+            kotlinx.coroutines.delay(minOf(left, 250))
+        }
+    }
+
+    private fun isRateLimited(msg: String?): Boolean {
+        val m = msg.orEmpty().lowercase()
+        return "429" in m || "too many requests" in m || "rate limit" in m || "rate-limit" in m
     }
 
     fun cancelDownloads() {

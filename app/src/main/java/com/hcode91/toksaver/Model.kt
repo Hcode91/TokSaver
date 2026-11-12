@@ -134,6 +134,26 @@ data class Video(
     }
 }
 
+/** How hard to hit the servers when downloading. */
+enum class DownloadPace(
+    val label: String,
+    private val pauseSec: Int,
+    val limitRate: String?,   // yt-dlp --limit-rate
+    val bytesPerSec: Long,    // cap for direct (Instagram) downloads; 0 = none
+) {
+    FAST("Fast · no pause, full speed", 0, null, 0),
+    NORMAL("Normal · ~2s pause between downloads", 2, null, 0),
+    GENTLE("Gentle · ~5s pause, max 2 MB/s", 5, "2M", 2_000_000),
+    SLOW("Very gentle · ~10s pause, max 1 MB/s", 10, "1M", 1_000_000);
+
+    /** Pause with ±30% randomness so requests don't arrive like clockwork. */
+    fun pauseMs(): Long {
+        if (pauseSec == 0) return 0
+        val base = pauseSec * 1000L
+        return (base * (0.7 + Math.random() * 0.6)).toLong()
+    }
+}
+
 /** Saved lists per platform + username, so big profiles open instantly. */
 class ListCache(context: Context) {
     private val dir = File(context.filesDir, "lists").apply { mkdirs() }
@@ -224,6 +244,11 @@ class SavedStore(context: Context) {
     var deleteOriginal: Boolean
         get() = prefs.getBoolean("__del_orig", false)
         set(v) = prefs.edit().putBoolean("__del_orig", v).apply()
+
+    var pace: DownloadPace
+        get() = runCatching { DownloadPace.valueOf(prefs.getString("__pace", "NORMAL")!!) }
+            .getOrDefault(DownloadPace.NORMAL)
+        set(v) = prefs.edit().putString("__pace", v.name).apply()
 
     var animatedPreviews: Boolean
         get() = prefs.getBoolean("__anim", true)

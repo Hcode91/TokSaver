@@ -152,6 +152,16 @@ class MainActivity : AppCompatActivity() {
                     adapter.reloadThumbs()
                 }
                 R.id.action_ig_clear -> vm.clearBrowsed()
+                R.id.action_pace -> {
+                    val paces = DownloadPace.entries
+                    MaterialAlertDialogBuilder(this)
+                        .setTitle("Download pace")
+                        .setSingleChoiceItems(
+                            paces.map { p -> p.label }.toTypedArray(), paces.indexOf(vm.pace),
+                        ) { d, which -> vm.pace = paces[which]; d.dismiss() }
+                        .setNegativeButton("Close", null)
+                        .show()
+                }
                 R.id.action_ig_logout -> {
                     InstagramClient.signOut()
                     status.text = "Signed out of Instagram"

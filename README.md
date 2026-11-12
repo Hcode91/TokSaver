@@ -16,6 +16,17 @@ Android app: pick a platform (TikTok, YouTube, YouTube Shorts or Instagram), ent
 - Profile lists are cached. Reopening a username shows the saved list instantly, then checks only for new videos. ⋮ → **Full reload** rebuilds the whole list.
 - You can share a profile link from the TikTok app straight into TokSaver.
 
+## Download pace
+
+⋮ → **Download pace** sets how gently the app downloads:
+
+- **Fast**: no pause, full speed.
+- **Normal** (default): about a 2-second pause between downloads.
+- **Gentle**: about 5 seconds, capped at 2 MB/s.
+- **Very gentle**: about 10 seconds, capped at 1 MB/s.
+
+Pauses vary a little at random. If a server replies "too many requests", the app waits 60 seconds and tries that item once more.
+
 ## How it works
 
 It uses [yt-dlp](https://github.com/yt-dlp/yt-dlp) via [youtubedl-android](https://github.com/JunkFood02/youtubedl-android). TikTok changes often. The app updates yt-dlp automatically once a day. If loading breaks, use ⋮ → **Update engine (nightly)**, which usually has the newest TikTok fixes.
