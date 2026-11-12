@@ -26,6 +26,7 @@ data class UiState(
     val videos: List<Video> = emptyList(),
     val fetching: Boolean = false,
     val downloading: Boolean = false,
+    val savedAccounts: List<ListCache.Saved> = emptyList(),
 ) {
     val selectedCount get() = videos.count { it.selected }
 }
@@ -51,6 +52,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     @Volatile private var stopFetchFlag = false
 
     init {
+        // Reopen where you left off: saved list for the last account (or the browsed list).
+        val p0 = _state.value.platform
+        if (p0.browsed) loadBrowsed() else showSaved(store.lastUser(p0))
+        refreshSaved()
         viewModelScope.launch(Dispatchers.IO) {
             engineLock.withLock {
                 _state.update { it.copy(busyText = "Preparing engine… (first launch takes a few seconds)") }
@@ -114,7 +119,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "")
         }
-        if (p.browsed) loadBrowsed()
+        if (p.browsed) loadBrowsed() else showSaved(store.lastUser(p))
+        refreshSaved()
+    }
+
+    private fun refreshSaved() {
+        val p = _state.value.platform
+        val list = if (p.browsed) emptyList() else listCache.savedUsers(p)
+        _state.update { it.copy(savedAccounts = list) }
+    }
+
+    /** Shows a saved account's list straight from the phone, without going online. */
+    fun showSaved(raw: String) {
+        val st = _state.value
+        if (st.fetching || st.downloading || st.platform.browsed) return
+        val p = st.platform
+        val user = p.cleanUser(raw)
+        if (user.isBlank()) return
+        val e = listCache.load(p, user) ?: return
+        store.setLastUser(p, user)
+        val date = java.text.SimpleDateFormat("d MMM, HH:mm", java.util.Locale.UK).format(java.util.Date(e.savedAt))
+        _state.update {
+            it.copy(
+                username = user,
+                videos = e.videos.map { v -> v.copy(saved = store.isSaved(p.key(v.id))) },
+                status = "@$user · ${e.videos.size} saved · last checked $date · Fetch to check for new",
+            )
+        }
+    }
+
+    /** Forgets a saved account list (doesn't touch anything already downloaded). */
+    fun forgetSaved(user: String) {
+        val st = _state.value
+        if (st.fetching || st.downloading) return
+        listCache.clear(st.platform, user)
+        if (st.username.equals(user, ignoreCase = true)) {
+            _state.update { it.copy(videos = emptyList(), status = "Removed @$user") }
+        }
+        refreshSaved()
     }
 
     /** Shows what the in-app browser picked up (Instagram posts or general web finds), kept between visits. */
@@ -263,6 +305,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         val videos = _state.value.videos
         listCache.save(_state.value.platform, user, videos, complete)
+        refreshSaved()
         _state.update {
             it.copy(
                 fetching = false,

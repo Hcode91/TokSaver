@@ -13,6 +13,7 @@ Android app: pick a platform (TikTok, YouTube, YouTube Shorts or Instagram), ent
 - **Don't keep the original video:** optional. When frames and/or GIFs are being made, the video itself isn't saved. If processing fails or you cancel, the video is kept so nothing is lost.
 - **Only keep frames with people:** an on-device detector (MediaPipe EfficientDet-Lite0) checks each frame and skips ones without a person. You can set the detection confidence and how much of the frame the person must fill. Kept frames keep their original frame number, so gaps show which frames were skipped.
 - Each tile plays TikTok's short looping preview, so you can see what a video is before downloading. You can turn this off in ⋮ → Animated previews.
+- Every account you load is kept. A row of chips under the search box shows saved accounts for the current platform, with post counts. Tap a chip to open that account's list instantly (offline), or long-press it to remove it. The app also reopens where you left off.
 - Profile lists are cached. Reopening a username shows the saved list instantly, then checks only for new videos. ⋮ → **Full reload** rebuilds the whole list.
 - You can share a profile link from the TikTok app straight into TokSaver.
 

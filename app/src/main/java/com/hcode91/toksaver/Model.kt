@@ -166,6 +166,32 @@ class ListCache(context: Context) {
 
     data class Entry(val videos: List<Video>, val savedAt: Long, val complete: Boolean)
 
+    /** A saved account list: handle, how many posts, when it was last updated. */
+    data class Saved(val user: String, val count: Int, val savedAt: Long)
+
+    /** Every handle with a saved list for [platform], most recently updated first. */
+    fun savedUsers(platform: Platform): List<Saved> {
+        val prefix = platform.name.lowercase() + "_"
+        val platformPrefixes = Platform.entries.map { it.name.lowercase() + "_" }
+        val out = HashMap<String, Saved>()
+        dir.listFiles()?.forEach { f ->
+            if (f.extension != "json") return@forEach
+            val stem = f.nameWithoutExtension
+            val user = when {
+                stem.startsWith(prefix) -> stem.removePrefix(prefix)
+                // Old TikTok lists: "<user>.json"
+                platform == Platform.TIKTOK && platformPrefixes.none { stem.startsWith(it) } -> stem
+                else -> return@forEach
+            }
+            if (user == "browser") return@forEach
+            val e = load(platform, user) ?: return@forEach
+            if (e.videos.isEmpty()) return@forEach
+            val prev = out[user]
+            if (prev == null || prev.savedAt < e.savedAt) out[user] = Saved(user, e.videos.size, e.savedAt)
+        }
+        return out.values.sortedByDescending { it.savedAt }
+    }
+
     fun load(platform: Platform, user: String): Entry? {
         val f = file(platform.cacheName(user)).takeIf { it.exists() }
             ?: if (platform == Platform.TIKTOK) file(user.lowercase()).takeIf { it.exists() } else null
@@ -185,6 +211,7 @@ class ListCache(context: Context) {
 
     fun clear(platform: Platform, user: String) {
         file(platform.cacheName(user)).delete()
+        if (platform == Platform.TIKTOK) file(user.lowercase()).delete()
     }
 
     fun save(platform: Platform, user: String, videos: List<Video>, complete: Boolean) {

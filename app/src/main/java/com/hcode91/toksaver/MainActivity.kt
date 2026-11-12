@@ -47,6 +47,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var grid: RecyclerView
     private lateinit var userLayout: TextInputLayout
     private var shownPlatform: Platform? = null
+    private var shownSaved: List<ListCache.Saved>? = null
+    private var shownUser: String? = null
 
     // Coming back from the Instagram browser: show what was picked up.
     private val igBrowser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
@@ -301,6 +303,38 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) { }
     }
 
+    /** Row of saved accounts for this platform: tap to open, long-press to remove. */
+    private fun renderSaved(s: UiState) {
+        val scroll = findViewById<View>(R.id.savedScroll)
+        scroll.visibility = if (s.savedAccounts.isEmpty() || s.platform.browsed) View.GONE else View.VISIBLE
+        if (shownSaved == s.savedAccounts && shownUser == s.username) return
+        shownSaved = s.savedAccounts
+        shownUser = s.username
+        val group = findViewById<ChipGroup>(R.id.savedAccounts)
+        group.removeAllViews()
+        s.savedAccounts.forEach { a ->
+            group.addView(Chip(this).apply {
+                text = "@${a.user} · ${a.count}"
+                isCheckable = true
+                isChecked = a.user.equals(s.username, ignoreCase = true)
+                setOnClickListener {
+                    input.setText(a.user)
+                    vm.showSaved(a.user)
+                    isChecked = true
+                }
+                setOnLongClickListener {
+                    MaterialAlertDialogBuilder(this@MainActivity)
+                        .setTitle("Remove @${a.user}?")
+                        .setMessage("Removes the saved list from the app. Files you've already downloaded stay on your phone.")
+                        .setPositiveButton("Remove") { _, _ -> vm.forgetSaved(a.user) }
+                        .setNegativeButton("Cancel", null)
+                        .show()
+                    true
+                }
+            })
+        }
+    }
+
     private fun render(s: UiState) {
         if (shownPlatform != s.platform) {
             shownPlatform = s.platform
@@ -313,6 +347,7 @@ class MainActivity : AppCompatActivity() {
             toolbar.menu.findItem(R.id.action_full_reload)?.isVisible = !browse
             toolbar.menu.findItem(R.id.action_ig_clear)?.isVisible = browse
         }
+        renderSaved(s)
         adapter.submitList(s.videos)
 
         toolbar.subtitle = s.engineVersion?.let { "engine $it" }
