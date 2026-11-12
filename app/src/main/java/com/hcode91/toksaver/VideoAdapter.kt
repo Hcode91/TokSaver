@@ -73,6 +73,8 @@ class VideoAdapter(
         h.duration.text = when {
             v.media.size > 1 -> "▣ ${v.media.size}"          // carousel
             v.isPhotoOnly -> "Photo"
+            v.duration == null && v.media.any { it.isVideo } -> "Video"
+            v.duration == null && v.media.isEmpty() && platform == Platform.BROWSER -> "Stream"
             v.duration != null -> "%d:%02d".format(v.duration / 60, v.duration % 60)
             else -> ""
         }

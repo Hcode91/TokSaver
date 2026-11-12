@@ -29,7 +29,8 @@ data class Video(
     val views: Long?,
     val timestamp: Long?,
     val media: List<MediaItem> = emptyList(),  // direct files (Instagram); empty = use yt-dlp
-    val owner: String? = null,                 // account that posted it (Instagram browser)
+    val owner: String? = null,                 // account that posted it / website it came from
+    val referer: String? = null,               // page it was found on (web browser)
     val selected: Boolean = false,
     val saved: Boolean = false,
     val state: DlState = DlState.Idle,
@@ -41,6 +42,7 @@ data class Video(
         put("thumb", thumbnail ?: ""); put("anim", animatedThumb ?: "")
         put("dur", duration ?: -1); put("views", views ?: -1); put("ts", timestamp ?: -1)
         owner?.let { put("owner", it) }
+        referer?.let { put("ref", it) }
         if (media.isNotEmpty()) {
             put("media", JSONArray().apply {
                 media.forEach { put(JSONObject().put("u", it.url).put("v", it.isVideo)) }
@@ -90,6 +92,7 @@ data class Video(
             views = o.optLong("views", -1).takeIf { it >= 0 },
             timestamp = o.optLong("ts", -1).takeIf { it > 0 },
             owner = o.optString("owner").ifBlank { null },
+            referer = o.optString("ref").ifBlank { null },
             media = o.optJSONArray("media")?.let { arr ->
                 (0 until arr.length()).map {
                     val m = arr.getJSONObject(it)

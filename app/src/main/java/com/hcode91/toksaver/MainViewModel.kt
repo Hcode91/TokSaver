@@ -114,15 +114,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "")
         }
-        if (p == Platform.INSTAGRAM) loadBrowsed()
+        if (p.browsed) loadBrowsed()
     }
 
-    /** Shows the posts picked up in the Instagram browser (plus earlier ones, kept between visits). */
+    /** Shows what the in-app browser picked up (Instagram posts or general web finds), kept between visits. */
     fun loadBrowsed() {
         if (_state.value.downloading || _state.value.fetching) return
-        val p = Platform.INSTAGRAM
+        val p = _state.value.platform
+        if (!p.browsed) return
         val earlier = listCache.load(p, BROWSER_USER)?.videos.orEmpty()
-        val fresh = BrowserCatch.all()
+        val fresh = if (p == Platform.INSTAGRAM) BrowserCatch.all() else WebCatch.all()
         val freshIds = fresh.map { it.id }.toHashSet()
         val prev = _state.value.videos.associateBy { it.id }
         val merged = (fresh + earlier.filter { it.id !in freshIds }).map { v ->
@@ -134,21 +135,23 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
         listCache.save(p, BROWSER_USER, merged, complete = false)
+        val what = if (p == Platform.INSTAGRAM) "Instagram posts" else "images & videos found"
         _state.update {
             it.copy(
                 username = BROWSER_USER,
                 videos = merged,
-                status = if (merged.isEmpty()) "Tap Browse, then scroll Instagram to pick up posts"
-                else "${merged.size} Instagram posts · tap to select, long-press to open",
+                status = if (merged.isEmpty()) "Tap Browse and scroll: things you see get listed here"
+                else "${merged.size} $what · tap to select, long-press to open",
             )
         }
     }
 
     fun clearBrowsed() {
-        if (_state.value.downloading) return
-        BrowserCatch.clear()
-        listCache.clear(Platform.INSTAGRAM, BROWSER_USER)
-        _state.update { it.copy(videos = emptyList(), status = "Cleared detected posts") }
+        val p = _state.value.platform
+        if (_state.value.downloading || !p.browsed) return
+        if (p == Platform.INSTAGRAM) BrowserCatch.clear() else WebCatch.clear()
+        listCache.clear(p, BROWSER_USER)
+        _state.update { it.copy(videos = emptyList(), status = "Cleared the list") }
     }
 
     /**
@@ -412,7 +415,20 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
 
-                    if (platform == Platform.INSTAGRAM) {
+                    if (platform == Platform.BROWSER && v.media.isNotEmpty()) {
+                        // Plain image/video file found while browsing.
+                        val item = v.media.first()
+                        val file = WebDownloader.download(
+                            app, item, v.referer, workDir, v.id, pace.bytesPerSec,
+                        ) { pct -> setVideo(v.id) { it.copy(state = DlState.Running(pct)) } }
+                        val site = v.owner ?: "web"
+                        if (item.isVideo || MediaSaver.isVideo(file)) {
+                            handleVideo(file, "", v.id, site)
+                        } else {
+                            MediaSaver.saveImage(app, file, platform.folder, site, v, "")
+                            photos++
+                        }
+                    } else if (platform == Platform.INSTAGRAM) {
                         val folderUser = v.owner ?: user
                         var post = v
                         var refreshed = false
@@ -459,6 +475,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                             addOption("--no-part")
                             pace.limitRate?.let { addOption("--limit-rate", it) }
                             addOption("--retries", "3")
+                            v.referer?.let { addOption("--referer", it) }
                         }
                         YoutubeDL.getInstance().execute(req, DL_ID) { p, _, _ ->
                             val pct = p.toInt().coerceIn(0, 100)
@@ -471,7 +488,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val file = workDir.listFiles()?.filter { it.isFile }?.maxByOrNull { it.length() }
                             ?: throw IllegalStateException("No file produced")
                         if (!MediaSaver.isVideo(file)) throw IllegalStateException("Photo post (not supported)")
-                        handleVideo(file, "", v.id, user)
+                        handleVideo(file, "", v.id, v.owner ?: user)
                     }
                     store.markSaved(platform.key(v.id))
                     setVideo(v.id) { it.copy(state = DlState.Done, saved = true, selected = false) }

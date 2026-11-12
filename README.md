@@ -16,6 +16,12 @@ Android app: pick a platform (TikTok, YouTube, YouTube Shorts or Instagram), ent
 - Profile lists are cached. Reopening a username shows the saved list instantly, then checks only for new videos. ⋮ → **Full reload** rebuilds the whole list.
 - You can share a profile link from the TikTok app straight into TokSaver.
 
+## Browser
+
+The **Browser** chip opens an in-app web browser. As you browse, it lists images (above a minimum size, 300px by default) and videos it spots on each page. Only the links are listed; nothing is downloaded until you choose. Tap **View N found** (or press back) to go to the grid, then select and download with all the usual options. Files go to `Pictures/Browser/<site>/` and `Movies/Browser/<site>/`.
+
+The browser's ⋮ menu has back, forward, reload, pause/resume detection and the minimum image size. Streaming video (m3u8/mpd) is listed as **Stream** and downloaded through yt-dlp. Protected streams (Netflix and similar) can't be saved.
+
 ## Download pace
 
 ⋮ → **Download pace** sets how gently the app downloads:

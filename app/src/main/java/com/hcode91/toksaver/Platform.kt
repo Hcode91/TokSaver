@@ -12,7 +12,11 @@ enum class Platform(
     TIKTOK("TikTok", "TikTok", "TikTok username", 3, 9, 16, ""),
     YOUTUBE("YouTube", "YouTube", "YouTube channel (@handle)", 2, 16, 9, "yt:"),
     SHORTS("Shorts", "YouTube", "YouTube channel (@handle)", 3, 9, 16, "yt:"),
-    INSTAGRAM("Instagram", "Instagram", "Instagram username", 3, 4, 5, "ig:");
+    INSTAGRAM("Instagram", "Instagram", "Instagram username", 3, 4, 5, "ig:"),
+    BROWSER("Browser", "Browser", "", 3, 1, 1, "web:");
+
+    /** Platforms browsed in an in-app browser rather than looked up by username. */
+    val browsed get() = this == INSTAGRAM || this == BROWSER
 
     /** Key used for "already saved" tracking and the list cache. */
     fun key(id: String) = idPrefix + id
@@ -27,6 +31,7 @@ enum class Platform(
             YOUTUBE, SHORTS -> Regex("youtube\\.com/(@[\\w.-]+|channel/UC[\\w-]{22})").find(s)
                 ?.groupValues?.get(1)?.removePrefix("channel/")
             INSTAGRAM -> Regex("instagram\\.com/([\\w.]+)").find(s)?.groupValues?.get(1)
+            BROWSER -> null
         }
         if (fromUrl != null) return fromUrl.removePrefix("@")
         return s.removePrefix("@").substringBefore('/').substringBefore('?').trim()
@@ -38,6 +43,7 @@ enum class Platform(
         YOUTUBE -> ytBase(user) + "/videos"
         SHORTS -> ytBase(user) + "/shorts"
         INSTAGRAM -> "https://www.instagram.com/$user/"
+        BROWSER -> user
     }
 
     private fun ytBase(user: String) =

@@ -53,6 +53,10 @@ class MainActivity : AppCompatActivity() {
         vm.loadBrowsed()
     }
 
+    private fun openWeb() {
+        igBrowser.launch(Intent(this, WebBrowserActivity::class.java))
+    }
+
     private fun openInstagram(url: String? = null) {
         igBrowser.launch(
             Intent(this, InstagramBrowserActivity::class.java)
@@ -206,9 +210,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun doFetch() {
-        if (vm.state.value.platform == Platform.INSTAGRAM) {
-            openInstagram()
-            return
+        when (vm.state.value.platform) {
+            Platform.INSTAGRAM -> { openInstagram(); return }
+            Platform.BROWSER -> { openWeb(); return }
+            else -> {}
         }
         val text = input.text?.toString().orEmpty()
         if (text.isBlank()) return
@@ -303,7 +308,7 @@ class MainActivity : AppCompatActivity() {
             adapter.platform = s.platform
             userLayout.hint = s.platform.hint
             // Instagram is browsed rather than looked up by username.
-            val browse = s.platform == Platform.INSTAGRAM
+            val browse = s.platform.browsed
             userLayout.visibility = if (browse) View.GONE else View.VISIBLE
             toolbar.menu.findItem(R.id.action_full_reload)?.isVisible = !browse
             toolbar.menu.findItem(R.id.action_ig_clear)?.isVisible = browse
@@ -317,10 +322,11 @@ class MainActivity : AppCompatActivity() {
         fetchBtn.text = when {
             s.fetching -> "Stop"
             s.platform == Platform.INSTAGRAM -> "Browse Instagram"
+            s.platform == Platform.BROWSER -> "Open browser"
             else -> "Fetch"
         }
         fetchBtn.isEnabled = !s.downloading &&
-            (s.platform == Platform.INSTAGRAM || (s.engineReady && s.busyText == null))
+            (s.platform.browsed || (s.engineReady && s.busyText == null))
         input.isEnabled = !s.fetching && !s.downloading
 
         val sel = s.selectedCount
