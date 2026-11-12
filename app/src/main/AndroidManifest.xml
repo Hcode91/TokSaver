@@ -26,6 +26,11 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".InstagramBrowserActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:theme="@style/Theme.TokSaver.Login" />
+        <activity
             android:name=".InstagramLoginActivity"
             android:exported="false"
             android:theme="@style/Theme.TokSaver.Login" />

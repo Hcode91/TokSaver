@@ -29,6 +29,7 @@ data class Video(
     val views: Long?,
     val timestamp: Long?,
     val media: List<MediaItem> = emptyList(),  // direct files (Instagram); empty = use yt-dlp
+    val owner: String? = null,                 // account that posted it (Instagram browser)
     val selected: Boolean = false,
     val saved: Boolean = false,
     val state: DlState = DlState.Idle,
@@ -39,6 +40,7 @@ data class Video(
         put("id", id); put("url", url); put("title", title)
         put("thumb", thumbnail ?: ""); put("anim", animatedThumb ?: "")
         put("dur", duration ?: -1); put("views", views ?: -1); put("ts", timestamp ?: -1)
+        owner?.let { put("owner", it) }
         if (media.isNotEmpty()) {
             put("media", JSONArray().apply {
                 media.forEach { put(JSONObject().put("u", it.url).put("v", it.isVideo)) }
@@ -87,6 +89,7 @@ data class Video(
             duration = o.optInt("dur", -1).takeIf { it > 0 },
             views = o.optLong("views", -1).takeIf { it >= 0 },
             timestamp = o.optLong("ts", -1).takeIf { it > 0 },
+            owner = o.optString("owner").ifBlank { null },
             media = o.optJSONArray("media")?.let { arr ->
                 (0 until arr.length()).map {
                     val m = arr.getJSONObject(it)
@@ -155,6 +158,10 @@ class ListCache(context: Context) {
         } catch (e: Exception) {
             null
         }
+    }
+
+    fun clear(platform: Platform, user: String) {
+        file(platform.cacheName(user)).delete()
     }
 
     fun save(platform: Platform, user: String, videos: List<Video>, complete: Boolean) {

@@ -109,7 +109,7 @@ class InstagramClient(private val context: Context) {
         return parsePost(item)
     }
 
-    private fun parsePost(o: JSONObject): Video? {
+    fun parsePost(o: JSONObject): Video? {
         val pk = o.opt("pk")?.toString() ?: o.optString("id").substringBefore('_')
         if (pk.isBlank()) return null
         val code = o.optString("code")
@@ -136,7 +136,44 @@ class InstagramClient(private val context: Context) {
             views = views.takeIf { it >= 0 },
             timestamp = o.optLong("taken_at", -1).takeIf { it > 0 },
             media = media,
+            owner = o.optJSONObject("user")?.optString("username")?.ifBlank { null }
+                ?: o.optJSONObject("owner")?.optString("username")?.ifBlank { null },
         )
+    }
+
+    /**
+     * Finds every post inside a chunk of Instagram JSON (API or embedded page data).
+     * Handles "for (;;);" prefixes and newline-separated streamed parts.
+     */
+    fun scanJson(text: String): List<Video> {
+        val found = LinkedHashMap<String, Video>()
+        fun walk(x: Any?) {
+            when (x) {
+                is JSONObject -> {
+                    val looksLikePost = x.has("code") &&
+                        (x.has("image_versions2") || x.has("video_versions") || x.has("carousel_media"))
+                    if (looksLikePost) {
+                        parsePost(x)?.let { found.putIfAbsent(it.id, it) }
+                        return // don't treat carousel children as separate posts
+                    }
+                    val keys = x.keys()
+                    while (keys.hasNext()) walk(x.opt(keys.next()))
+                }
+                is org.json.JSONArray -> for (i in 0 until x.length()) walk(x.opt(i))
+            }
+        }
+        val start = text.indexOf('{')
+        if (start < 0) return emptyList()
+        val body = text.substring(start)
+        try {
+            walk(JSONObject(body))
+        } catch (e: Exception) {
+            body.split('\n').forEach { line ->
+                val t = line.trim()
+                if (t.startsWith("{")) try { walk(JSONObject(t)) } catch (_: Exception) { }
+            }
+        }
+        return found.values.toList()
     }
 
     private fun mediaOf(o: JSONObject): MediaItem? {

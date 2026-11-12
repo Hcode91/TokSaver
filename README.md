@@ -4,7 +4,7 @@ Android app: pick a platform (TikTok, YouTube, YouTube Shorts or Instagram), ent
 
 - Videos save to `Movies/<Platform>/<username>/` and photos to `Pictures/<Platform>/<username>/`. Both show up in your gallery.
 - **YouTube**: enter a channel's @handle or a channel link. Videos download at up to 1080p as MP4.
-- **Instagram**: sign in once via ⋮ → **Instagram sign in**. The session stays on your phone. Photos, Reels and carousel posts (all items) are supported. Private accounts only work if you follow them.
+- **Instagram**: tap **Browse Instagram** to open Instagram inside the app (sign in there the first time). As you scroll feeds, profiles, Reels or posts, the app picks up each post it sees. Tap **View N detected** (or press back) to go to the grid and download. Photos, Reels and carousels (all items) are supported. Files go into a folder named after the account that posted them. Picked-up posts stay in the grid until you use ⋮ → **Clear detected Instagram posts**.
 - **Tap** a video to select it. **Long-press** to open it in TikTok.
 - The ⋮ menu lets you select all, select only videos you haven't downloaded yet, or clear the selection.
 - Videos you've already saved get a **Saved** badge.

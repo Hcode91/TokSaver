@@ -48,12 +48,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var userLayout: TextInputLayout
     private var shownPlatform: Platform? = null
 
-    // After signing in to Instagram, carry on with the fetch.
-    private val igLogin = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        if (InstagramClient.isSignedIn()) {
-            status.text = "Signed in to Instagram"
-            if (vm.state.value.platform == Platform.INSTAGRAM && !input.text.isNullOrBlank()) doFetch()
-        }
+    // Coming back from the Instagram browser: show what was picked up.
+    private val igBrowser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        vm.loadBrowsed()
+    }
+
+    private fun openInstagram(url: String? = null) {
+        igBrowser.launch(
+            Intent(this, InstagramBrowserActivity::class.java)
+                .apply { url?.let { putExtra(InstagramBrowserActivity.EXTRA_URL, it) } }
+        )
     }
 
     private val imageLoader by lazy {
@@ -147,7 +151,7 @@ class MainActivity : AppCompatActivity() {
                     it.isChecked = vm.animatedPreviews
                     adapter.reloadThumbs()
                 }
-                R.id.action_ig_login -> igLogin.launch(Intent(this, InstagramLoginActivity::class.java))
+                R.id.action_ig_clear -> vm.clearBrowsed()
                 R.id.action_ig_logout -> {
                     InstagramClient.signOut()
                     status.text = "Signed out of Instagram"
@@ -182,21 +186,25 @@ class MainActivity : AppCompatActivity() {
         if (vm.state.value.fetching || vm.state.value.downloading) return
         vm.setPlatform(p)
         findViewById<ChipGroup>(R.id.platforms).check(2000 + p.ordinal)
+        if (p == Platform.INSTAGRAM) {
+            // Open the shared post/profile in the browser; it picks up posts from there.
+            Regex("https://\\S+").find(text)?.value?.let { openInstagram(it) } ?: openInstagram()
+            return
+        }
         input.setText(user)
         doFetch()
     }
 
     private fun doFetch() {
+        if (vm.state.value.platform == Platform.INSTAGRAM) {
+            openInstagram()
+            return
+        }
         val text = input.text?.toString().orEmpty()
         if (text.isBlank()) return
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(input.windowToken, 0)
         input.clearFocus()
-        if (vm.state.value.platform == Platform.INSTAGRAM && !InstagramClient.isSignedIn()) {
-            status.text = "Sign in to Instagram to continue"
-            igLogin.launch(Intent(this, InstagramLoginActivity::class.java))
-            return
-        }
         vm.fetch(text)
     }
 
@@ -284,6 +292,11 @@ class MainActivity : AppCompatActivity() {
             (grid.layoutManager as GridLayoutManager).spanCount = s.platform.columns
             adapter.platform = s.platform
             userLayout.hint = s.platform.hint
+            // Instagram is browsed rather than looked up by username.
+            val browse = s.platform == Platform.INSTAGRAM
+            userLayout.visibility = if (browse) View.GONE else View.VISIBLE
+            toolbar.menu.findItem(R.id.action_full_reload)?.isVisible = !browse
+            toolbar.menu.findItem(R.id.action_ig_clear)?.isVisible = browse
         }
         adapter.submitList(s.videos)
 
@@ -291,8 +304,13 @@ class MainActivity : AppCompatActivity() {
         busy.visibility = if (s.busyText != null || s.fetching) View.VISIBLE else View.GONE
         status.text = s.busyText ?: s.status
 
-        fetchBtn.text = if (s.fetching) "Stop" else "Fetch"
-        fetchBtn.isEnabled = s.engineReady && s.busyText == null && !s.downloading
+        fetchBtn.text = when {
+            s.fetching -> "Stop"
+            s.platform == Platform.INSTAGRAM -> "Browse Instagram"
+            else -> "Fetch"
+        }
+        fetchBtn.isEnabled = !s.downloading &&
+            (s.platform == Platform.INSTAGRAM || (s.engineReady && s.busyText == null))
         input.isEnabled = !s.fetching && !s.downloading
 
         val sel = s.selectedCount

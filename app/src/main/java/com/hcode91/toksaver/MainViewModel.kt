@@ -114,6 +114,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _state.update {
             it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "")
         }
+        if (p == Platform.INSTAGRAM) loadBrowsed()
+    }
+
+    /** Shows the posts picked up in the Instagram browser (plus earlier ones, kept between visits). */
+    fun loadBrowsed() {
+        if (_state.value.downloading || _state.value.fetching) return
+        val p = Platform.INSTAGRAM
+        val earlier = listCache.load(p, BROWSER_USER)?.videos.orEmpty()
+        val fresh = BrowserCatch.all()
+        val freshIds = fresh.map { it.id }.toHashSet()
+        val prev = _state.value.videos.associateBy { it.id }
+        val merged = (fresh + earlier.filter { it.id !in freshIds }).map { v ->
+            val old = prev[v.id]
+            v.copy(
+                saved = store.isSaved(p.key(v.id)),
+                selected = old?.selected ?: false,
+                state = old?.state ?: DlState.Idle,
+            )
+        }
+        listCache.save(p, BROWSER_USER, merged, complete = false)
+        _state.update {
+            it.copy(
+                username = BROWSER_USER,
+                videos = merged,
+                status = if (merged.isEmpty()) "Tap Browse, then scroll Instagram to pick up posts"
+                else "${merged.size} Instagram posts · tap to select, long-press to open",
+            )
+        }
+    }
+
+    fun clearBrowsed() {
+        if (_state.value.downloading) return
+        BrowserCatch.clear()
+        listCache.clear(Platform.INSTAGRAM, BROWSER_USER)
+        _state.update { it.copy(videos = emptyList(), status = "Cleared detected posts") }
     }
 
     /**
@@ -291,6 +326,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val dropVideo = processing && deleteOriginal
         val user = s.username
         val platform = s.platform
+        val shownUser = if (user == BROWSER_USER) "<account>" else user
         cancelDownloads = false
         queue.forEach { q -> setVideo(q.id) { it.copy(state = DlState.Queued) } }
         _state.update { it.copy(downloading = true) }
@@ -323,12 +359,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 try {
                     // Pull out frames from a saved video, if asked for.
                     // Frames and/or GIFs from a downloaded video, if asked for.
-                    fun process(file: File, procId: String) {
+                    fun process(file: File, procId: String, who: String) {
                         if (frameMode != FrameMode.NONE) {
                             setVideo(v.id) { it.copy(state = DlState.Running(0, frames = true)) }
                             var lastPct = -1
                             framesSaved += FrameExtractor.extract(
-                                app, file, platform.folder, user, procId, frameMode,
+                                app, file, platform.folder, who, procId, frameMode,
                                 cancelled = { cancelDownloads },
                                 keep = detector?.let { it::hasPerson },
                             ) { pct ->
@@ -341,30 +377,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (gifs.enabled && !cancelDownloads) {
                             setVideo(v.id) { it.copy(state = DlState.Running(0, gifs = true)) }
                             gifsSaved += GifMaker.make(
-                                app, file, platform.folder, user, procId, gifs,
+                                app, file, platform.folder, who, procId, gifs,
                                 cancelled = { cancelDownloads },
                             ) { pct -> setVideo(v.id) { it.copy(state = DlState.Running(pct, gifs = true)) } }
                         }
                     }
 
                     // Keep the video unless "delete original" is on and processing fully worked.
-                    fun handleVideo(file: File, suffix: String, procId: String) {
+                    fun handleVideo(file: File, suffix: String, procId: String, who: String) {
                         if (!dropVideo) {
-                            MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
+                            MediaSaver.saveToMovies(app, file, platform.folder, who, v, suffix)
                             photosOrVideos++
-                            process(file, procId)
+                            process(file, procId, who)
                             return
                         }
                         try {
-                            process(file, procId)
+                            process(file, procId, who)
                         } catch (e: Exception) {
-                            MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
+                            MediaSaver.saveToMovies(app, file, platform.folder, who, v, suffix)
                             photosOrVideos++
                             throw e
                         }
                         if (cancelDownloads) {
                             // Stopped part-way: keep the video so nothing is lost.
-                            MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
+                            MediaSaver.saveToMovies(app, file, platform.folder, who, v, suffix)
                             photosOrVideos++
                         } else {
                             videosDropped++
@@ -372,6 +408,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     }
 
                     if (platform == Platform.INSTAGRAM) {
+                        val folderUser = v.owner ?: user
                         var post = v
                         var refreshed = false
                         val many = v.media.size > 1
@@ -393,9 +430,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 continue
                             }
                             if (item.isVideo) {
-                                handleVideo(file, suffix, "${v.id}$suffix")
+                                handleVideo(file, suffix, "${v.id}$suffix", folderUser)
                             } else {
-                                MediaSaver.saveImage(app, file, platform.folder, user, v, suffix)
+                                MediaSaver.saveImage(app, file, platform.folder, folderUser, v, suffix)
                                 photos++
                             }
                             file.delete()
@@ -427,7 +464,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val file = workDir.listFiles()?.filter { it.isFile }?.maxByOrNull { it.length() }
                             ?: throw IllegalStateException("No file produced")
                         if (!MediaSaver.isVideo(file)) throw IllegalStateException("Photo post (not supported)")
-                        handleVideo(file, "", v.id)
+                        handleVideo(file, "", v.id, user)
                     }
                     store.markSaved(platform.key(v.id))
                     setVideo(v.id) { it.copy(state = DlState.Done, saved = true, selected = false) }
@@ -449,11 +486,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     videos = st.videos.map { if (it.state is DlState.Queued) it.copy(state = DlState.Idle) else it },
                     status = buildString {
                         append("Done $ok")
-                        if (photosOrVideos > 0) append(" · $photosOrVideos videos → Movies/${platform.folder}/$user")
-                        if (photos > 0) append(" · $photos photos → Pictures/${platform.folder}/$user")
+                        if (photosOrVideos > 0) append(" · $photosOrVideos videos → Movies/${platform.folder}/$shownUser")
+                        if (photos > 0) append(" · $photos photos → Pictures/${platform.folder}/$shownUser")
                         if (framesSaved > 0) append(" · $framesSaved frames")
                         if (gifsSaved > 0) append(" · $gifsSaved GIFs")
-                        if (framesSaved > 0 || gifsSaved > 0) append(" → Pictures/${platform.folder}/$user")
+                        if (framesSaved > 0 || gifsSaved > 0) append(" → Pictures/${platform.folder}/$shownUser")
                         if (videosDropped > 0) append(" · $videosDropped originals not kept")
                         if (detector != null) append(" (people only)")
                         detectorError?.let { append(" · person filter off: $it") }
@@ -485,5 +522,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val FETCH_ID = "fetch"
         private const val DL_ID = "dl"
+        const val BROWSER_USER = "browser"
     }
 }
