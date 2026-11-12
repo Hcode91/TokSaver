@@ -9,6 +9,8 @@ Android app: pick a platform (TikTok, YouTube, YouTube Shorts or Instagram), ent
 - The ⋮ menu lets you select all, select only videos you haven't downloaded yet, or clear the selection.
 - Videos you've already saved get a **Saved** badge.
 - When you tap Download, you can choose to also cut each video into JPEG frames: every frame, or 10, 5 or 1 per second. Frames go to `Pictures/TikTok/<username>/<videoId>/`.
+- **Slow-motion GIFs:** cuts each video into 3-second pieces and saves each as a slowed-down GIF (normal, ½, ⅓ or ¼ speed; 480px wide, 15fps). A leftover piece under 1 second is skipped. GIFs go to `Pictures/<Platform>/<username>/<videoId>/gif_01.gif`, …
+- **Don't keep the original video:** optional. When frames and/or GIFs are being made, the video itself isn't saved. If processing fails or you cancel, the video is kept so nothing is lost.
 - **Only keep frames with people:** an on-device detector (MediaPipe EfficientDet-Lite0) checks each frame and skips ones without a person. You can set the detection confidence and how much of the frame the person must fill. Kept frames keep their original frame number, so gaps show which frames were skipped.
 - Each tile plays TikTok's short looping preview, so you can see what a video is before downloading. You can turn this off in ⋮ → Animated previews.
 - Profile lists are cached. Reopening a username shows the saved list instantly, then checks only for new videos. ⋮ → **Full reload** rebuilds the whole list.

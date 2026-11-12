@@ -11,7 +11,7 @@ import java.io.File
 sealed class DlState {
     data object Idle : DlState()
     data object Queued : DlState()
-    data class Running(val percent: Int, val frames: Boolean = false) : DlState()
+    data class Running(val percent: Int, val frames: Boolean = false, val gifs: Boolean = false) : DlState()
     data object Done : DlState()
     data class Failed(val reason: String) : DlState()
 }
@@ -206,6 +206,17 @@ class SavedStore(context: Context) {
             .putFloat("__pf_conf", v.minConfidence)
             .putInt("__pf_area", v.minAreaPercent)
             .apply()
+
+    var gifOptions: GifOptions
+        get() = GifOptions(
+            enabled = prefs.getBoolean("__gif_on", false),
+            slowFactor = prefs.getInt("__gif_slow", 2),
+        )
+        set(v) = prefs.edit().putBoolean("__gif_on", v.enabled).putInt("__gif_slow", v.slowFactor).apply()
+
+    var deleteOriginal: Boolean
+        get() = prefs.getBoolean("__del_orig", false)
+        set(v) = prefs.edit().putBoolean("__del_orig", v).apply()
 
     var animatedPreviews: Boolean
         get() = prefs.getBoolean("__anim", true)

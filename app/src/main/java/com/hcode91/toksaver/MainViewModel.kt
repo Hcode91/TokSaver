@@ -265,13 +265,30 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         get() = store.personFilter
         set(v) { store.personFilter = v }
 
-    fun startDownloads(frameMode: FrameMode, personFilter: PersonFilter) {
+    var lastGifOptions: GifOptions
+        get() = store.gifOptions
+        set(v) { store.gifOptions = v }
+
+    var lastDeleteOriginal: Boolean
+        get() = store.deleteOriginal
+        set(v) { store.deleteOriginal = v }
+
+    fun startDownloads(
+        frameMode: FrameMode,
+        personFilter: PersonFilter,
+        gifs: GifOptions,
+        deleteOriginal: Boolean,
+    ) {
         val s = _state.value
         if (s.downloading || s.fetching) return
         val queue = s.videos.filter { it.selected }
         if (queue.isEmpty()) return
         lastFrameMode = frameMode
         lastPersonFilter = personFilter
+        lastGifOptions = gifs
+        lastDeleteOriginal = deleteOriginal
+        val processing = frameMode != FrameMode.NONE || gifs.enabled
+        val dropVideo = processing && deleteOriginal
         val user = s.username
         val platform = s.platform
         cancelDownloads = false
@@ -284,6 +301,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             var ok = 0
             var failed = 0
             var framesSaved = 0
+            var gifsSaved = 0
+            var videosDropped = 0
             var photosOrVideos = 0
             var photos = 0
             var detectorError: String? = null
@@ -303,19 +322,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 workDir.mkdirs()
                 try {
                     // Pull out frames from a saved video, if asked for.
-                    fun frames(file: File, frameId: String) {
-                        if (frameMode == FrameMode.NONE) return
-                        setVideo(v.id) { it.copy(state = DlState.Running(0, frames = true)) }
-                        var lastPct = -1
-                        framesSaved += FrameExtractor.extract(
-                            app, file, platform.folder, user, frameId, frameMode,
-                            cancelled = { cancelDownloads },
-                            keep = detector?.let { it::hasPerson },
-                        ) { pct ->
-                            if (pct != lastPct) {
-                                lastPct = pct
-                                setVideo(v.id) { it.copy(state = DlState.Running(pct, frames = true)) }
+                    // Frames and/or GIFs from a downloaded video, if asked for.
+                    fun process(file: File, procId: String) {
+                        if (frameMode != FrameMode.NONE) {
+                            setVideo(v.id) { it.copy(state = DlState.Running(0, frames = true)) }
+                            var lastPct = -1
+                            framesSaved += FrameExtractor.extract(
+                                app, file, platform.folder, user, procId, frameMode,
+                                cancelled = { cancelDownloads },
+                                keep = detector?.let { it::hasPerson },
+                            ) { pct ->
+                                if (pct != lastPct) {
+                                    lastPct = pct
+                                    setVideo(v.id) { it.copy(state = DlState.Running(pct, frames = true)) }
+                                }
                             }
+                        }
+                        if (gifs.enabled && !cancelDownloads) {
+                            setVideo(v.id) { it.copy(state = DlState.Running(0, gifs = true)) }
+                            gifsSaved += GifMaker.make(
+                                app, file, platform.folder, user, procId, gifs,
+                                cancelled = { cancelDownloads },
+                            ) { pct -> setVideo(v.id) { it.copy(state = DlState.Running(pct, gifs = true)) } }
+                        }
+                    }
+
+                    // Keep the video unless "delete original" is on and processing fully worked.
+                    fun handleVideo(file: File, suffix: String, procId: String) {
+                        if (!dropVideo) {
+                            MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
+                            photosOrVideos++
+                            process(file, procId)
+                            return
+                        }
+                        try {
+                            process(file, procId)
+                        } catch (e: Exception) {
+                            MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
+                            photosOrVideos++
+                            throw e
+                        }
+                        if (cancelDownloads) {
+                            // Stopped part-way: keep the video so nothing is lost.
+                            MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
+                            photosOrVideos++
+                        } else {
+                            videosDropped++
                         }
                     }
 
@@ -341,9 +393,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 continue
                             }
                             if (item.isVideo) {
-                                MediaSaver.saveToMovies(app, file, platform.folder, user, v, suffix)
-                                photosOrVideos++
-                                frames(file, "${v.id}$suffix")
+                                handleVideo(file, suffix, "${v.id}$suffix")
                             } else {
                                 MediaSaver.saveImage(app, file, platform.folder, user, v, suffix)
                                 photos++
@@ -377,9 +427,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         val file = workDir.listFiles()?.filter { it.isFile }?.maxByOrNull { it.length() }
                             ?: throw IllegalStateException("No file produced")
                         if (!MediaSaver.isVideo(file)) throw IllegalStateException("Photo post (not supported)")
-                        MediaSaver.saveToMovies(app, file, platform.folder, user, v)
-                        photosOrVideos++
-                        frames(file, v.id)
+                        handleVideo(file, "", v.id)
                     }
                     store.markSaved(platform.key(v.id))
                     setVideo(v.id) { it.copy(state = DlState.Done, saved = true, selected = false) }
@@ -404,6 +452,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         if (photosOrVideos > 0) append(" · $photosOrVideos videos → Movies/${platform.folder}/$user")
                         if (photos > 0) append(" · $photos photos → Pictures/${platform.folder}/$user")
                         if (framesSaved > 0) append(" · $framesSaved frames")
+                        if (gifsSaved > 0) append(" · $gifsSaved GIFs")
+                        if (framesSaved > 0 || gifsSaved > 0) append(" → Pictures/${platform.folder}/$user")
+                        if (videosDropped > 0) append(" · $videosDropped originals not kept")
                         if (detector != null) append(" (people only)")
                         detectorError?.let { append(" · person filter off: $it") }
                         if (failed > 0) append(" · $failed failed")

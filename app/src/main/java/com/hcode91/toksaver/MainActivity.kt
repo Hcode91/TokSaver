@@ -212,6 +212,11 @@ class MainActivity : AppCompatActivity() {
         val confSlider = view.findViewById<Slider>(R.id.confSlider)
         val areaLabel = view.findViewById<TextView>(R.id.areaLabel)
         val areaSlider = view.findViewById<Slider>(R.id.areaSlider)
+        val gifBox = view.findViewById<MaterialCheckBox>(R.id.gifs)
+        val gifOpts = view.findViewById<View>(R.id.gifOptions)
+        val slowLabel = view.findViewById<TextView>(R.id.slowLabel)
+        val slowSlider = view.findViewById<Slider>(R.id.slowSlider)
+        val deleteBox = view.findViewById<MaterialCheckBox>(R.id.deleteOriginal)
 
         modes.forEachIndexed { i, m ->
             group.addView(RadioButton(this).apply { id = 1000 + i; text = m.label })
@@ -221,6 +226,10 @@ class MainActivity : AppCompatActivity() {
         people.isChecked = pf.enabled
         confSlider.value = (pf.minConfidence * 100).toInt().coerceIn(20, 95).let { it - it % 5 }.toFloat()
         areaSlider.value = pf.minAreaPercent.coerceIn(0, 50).toFloat()
+        val go = vm.lastGifOptions
+        gifBox.isChecked = go.enabled
+        slowSlider.value = go.slowFactor.coerceIn(1, 4).toFloat()
+        deleteBox.isChecked = vm.lastDeleteOriginal
 
         fun refresh() {
             val framesOn = group.checkedRadioButtonId != 1000 + modes.indexOf(FrameMode.NONE)
@@ -228,11 +237,19 @@ class MainActivity : AppCompatActivity() {
             peopleOpts.visibility = if (framesOn && people.isChecked) View.VISIBLE else View.GONE
             confLabel.text = "Detection confidence: ${confSlider.value.toInt()}%"
             areaLabel.text = "Person must fill at least ${areaSlider.value.toInt()}% of the frame"
+            gifOpts.visibility = if (gifBox.isChecked) View.VISIBLE else View.GONE
+            val slow = slowSlider.value.toInt()
+            slowLabel.text = if (slow == 1) "Speed: normal (each GIF lasts 3s)"
+            else "Speed: 1/$slow (each GIF lasts ${3 * slow}s)"
+            // Only offer deleting the video when something else is being made from it.
+            deleteBox.isEnabled = framesOn || gifBox.isChecked
         }
         group.setOnCheckedChangeListener { _, _ -> refresh() }
         people.setOnCheckedChangeListener { _, _ -> refresh() }
         confSlider.addOnChangeListener { _, _, _ -> refresh() }
         areaSlider.addOnChangeListener { _, _, _ -> refresh() }
+        gifBox.setOnCheckedChangeListener { _, _ -> refresh() }
+        slowSlider.addOnChangeListener { _, _, _ -> refresh() }
         refresh()
 
         MaterialAlertDialogBuilder(this)
@@ -247,6 +264,8 @@ class MainActivity : AppCompatActivity() {
                         minConfidence = confSlider.value / 100f,
                         minAreaPercent = areaSlider.value.toInt(),
                     ),
+                    GifOptions(enabled = gifBox.isChecked, slowFactor = slowSlider.value.toInt()),
+                    deleteOriginal = deleteBox.isChecked && deleteBox.isEnabled,
                 )
             }
             .setNegativeButton("Cancel", null)
