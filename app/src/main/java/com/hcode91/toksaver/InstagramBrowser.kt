@@ -33,6 +33,7 @@ object BrowserCatch {
     @Synchronized fun all(): List<Video> = posts.values.reversed()
     @Synchronized fun size() = posts.size
     @Synchronized fun clear() = posts.clear()
+    @Synchronized fun remove(ids: Set<String>) { ids.forEach { posts.remove(it) } }
 }
 
 /**

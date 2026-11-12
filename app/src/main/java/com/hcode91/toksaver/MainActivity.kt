@@ -303,14 +303,39 @@ class MainActivity : AppCompatActivity() {
         } catch (_: Exception) { }
     }
 
-    /** Row of saved accounts for this platform: tap to open, long-press to remove. */
+    private var shownOwners: List<Pair<String, Int>>? = null
+    private var shownFilter: String? = null
+
+    /**
+     * Chip row under the search box.
+     * TikTok/YouTube: saved accounts (tap to open, long-press to remove).
+     * Instagram/Browser: filter by account / website.
+     */
     private fun renderSaved(s: UiState) {
         val scroll = findViewById<View>(R.id.savedScroll)
-        scroll.visibility = if (s.savedAccounts.isEmpty() || s.platform.browsed) View.GONE else View.VISIBLE
+        val group = findViewById<ChipGroup>(R.id.savedAccounts)
+        if (s.platform.browsed) {
+            val owners = s.owners
+            scroll.visibility = if (owners.size < 2 && s.ownerFilter == null) View.GONE else View.VISIBLE
+            if (shownOwners == owners && shownFilter == s.ownerFilter && shownSaved == null) return
+            shownOwners = owners; shownFilter = s.ownerFilter; shownSaved = null; shownUser = null
+            group.removeAllViews()
+            group.addView(filterChip("All · ${s.videos.size}", s.ownerFilter == null) { vm.setOwnerFilter(null) })
+            owners.forEach { (owner, n) ->
+                val name = when {
+                    owner.isBlank() -> "Unknown"
+                    s.platform == Platform.INSTAGRAM -> "@$owner"
+                    else -> owner
+                }
+                group.addView(filterChip("$name · $n", owner == s.ownerFilter) { vm.setOwnerFilter(owner) })
+            }
+            return
+        }
+        shownOwners = null
+        scroll.visibility = if (s.savedAccounts.isEmpty()) View.GONE else View.VISIBLE
         if (shownSaved == s.savedAccounts && shownUser == s.username) return
         shownSaved = s.savedAccounts
         shownUser = s.username
-        val group = findViewById<ChipGroup>(R.id.savedAccounts)
         group.removeAllViews()
         s.savedAccounts.forEach { a ->
             group.addView(Chip(this).apply {
@@ -335,6 +360,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun filterChip(label: String, checked: Boolean, onTap: () -> Unit) = Chip(this).apply {
+        text = label
+        isCheckable = true
+        isChecked = checked
+        setOnClickListener { onTap() }
+    }
+
     private fun render(s: UiState) {
         if (shownPlatform != s.platform) {
             shownPlatform = s.platform
@@ -348,7 +380,7 @@ class MainActivity : AppCompatActivity() {
             toolbar.menu.findItem(R.id.action_ig_clear)?.isVisible = browse
         }
         renderSaved(s)
-        adapter.submitList(s.videos)
+        adapter.submitList(s.visibleVideos)
 
         toolbar.subtitle = s.engineVersion?.let { "engine $it" }
         busy.visibility = if (s.busyText != null || s.fetching) View.VISIBLE else View.GONE

@@ -47,6 +47,7 @@ object WebCatch {
     @Synchronized fun all(): List<Video> = items.values.reversed()
     @Synchronized fun size() = items.size
     @Synchronized fun clear() = items.clear()
+    @Synchronized fun remove(ids: Set<String>) { ids.forEach { items.remove(it) } }
 
     fun idFor(url: String): String =
         MessageDigest.getInstance("SHA-1").digest(url.toByteArray())

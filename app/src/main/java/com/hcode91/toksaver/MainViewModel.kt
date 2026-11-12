@@ -27,8 +27,18 @@ data class UiState(
     val fetching: Boolean = false,
     val downloading: Boolean = false,
     val savedAccounts: List<ListCache.Saved> = emptyList(),
+    val ownerFilter: String? = null,   // Instagram account / website shown (browsed tabs)
 ) {
     val selectedCount get() = videos.count { it.selected }
+
+    /** What the grid shows: everything, or just one account / website. */
+    val visibleVideos: List<Video>
+        get() = if (ownerFilter == null) videos else videos.filter { (it.owner ?: "") == ownerFilter }
+
+    /** Accounts / websites in the browsed list, biggest first. */
+    val owners: List<Pair<String, Int>>
+        get() = videos.groupingBy { it.owner ?: "" }.eachCount().toList()
+            .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
 }
 
 class MainViewModel(app: Application) : AndroidViewModel(app) {
@@ -117,7 +127,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (st.platform == p || st.fetching || st.downloading) return
         store.platform = p
         _state.update {
-            it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "")
+            it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "", ownerFilter = null)
         }
         if (p.browsed) loadBrowsed() else showSaved(store.lastUser(p))
         refreshSaved()
@@ -188,13 +198,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Clears the browsed list, or only the account / website currently filtered to. */
     fun clearBrowsed() {
-        val p = _state.value.platform
-        if (_state.value.downloading || !p.browsed) return
-        if (p == Platform.INSTAGRAM) BrowserCatch.clear() else WebCatch.clear()
-        listCache.clear(p, BROWSER_USER)
-        _state.update { it.copy(videos = emptyList(), status = "Cleared the list") }
+        val st = _state.value
+        val p = st.platform
+        if (st.downloading || !p.browsed) return
+        val only = st.ownerFilter
+        if (only == null) {
+            if (p == Platform.INSTAGRAM) BrowserCatch.clear() else WebCatch.clear()
+            listCache.clear(p, BROWSER_USER)
+            _state.update { it.copy(videos = emptyList(), status = "Cleared the list") }
+            return
+        }
+        val gone = st.videos.filter { (it.owner ?: "") == only }.map { it.id }.toHashSet()
+        if (p == Platform.INSTAGRAM) BrowserCatch.remove(gone) else WebCatch.remove(gone)
+        val left = st.videos.filter { it.id !in gone }
+        if (left.isEmpty()) listCache.clear(p, BROWSER_USER) else listCache.save(p, BROWSER_USER, left, false)
+        _state.update { it.copy(videos = left, ownerFilter = null, status = "Removed ${gone.size} from ${label(p, only)}") }
     }
+
+    fun setOwnerFilter(owner: String?) {
+        if (_state.value.downloading) return
+        _state.update {
+            val shown = if (owner == null) it.videos.size else it.videos.count { v -> (v.owner ?: "") == owner }
+            it.copy(
+                ownerFilter = owner,
+                status = if (owner == null) "${it.videos.size} in total · tap to select, long-press to open"
+                else "${label(it.platform, owner)} · $shown · tap to select, long-press to open",
+            )
+        }
+    }
+
+    private fun label(p: Platform, owner: String) =
+        if (owner.isBlank()) "unknown" else if (p == Platform.INSTAGRAM) "@$owner" else owner
 
     /**
      * Shows the cached list (if any) instantly, then checks TikTok.
@@ -325,8 +361,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggle(id: String) = mutate { if (it.id == id) it.copy(selected = !it.selected) else it }
-    fun selectAll() = mutate { it.copy(selected = true) }
-    fun selectNew() = mutate { it.copy(selected = !it.saved) }
+    // Select actions only touch what's on screen (respecting the account / website filter).
+    fun selectAll() = mutate { if (isVisible(it)) it.copy(selected = true) else it }
+    fun selectNew() = mutate { if (isVisible(it)) it.copy(selected = !it.saved) else it }
+
+    private fun isVisible(v: Video): Boolean {
+        val f = _state.value.ownerFilter ?: return true
+        return (v.owner ?: "") == f
+    }
     fun clearSelection() = mutate { it.copy(selected = false) }
 
     private fun mutate(f: (Video) -> Video) {

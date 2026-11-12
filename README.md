@@ -23,6 +23,10 @@ The **Browser** chip opens an in-app web browser. As you browse, it lists images
 
 The browser's ⋮ menu has back, forward, reload, pause/resume detection and the minimum image size. Streaming video (m3u8/mpd) is listed as **Stream** and downloaded through yt-dlp. Protected streams (Netflix and similar) can't be saved.
 
+### Filtering browsed lists
+
+On the Instagram and Browser tabs, a row of chips shows each account (Instagram) or website (Browser) with a count. Tap one to see only those posts, or tap **All**. **Select all** and **Select not yet downloaded** only affect what's showing. **⋮ → Clear browsed list** clears just the account or site you're filtered to, or everything when **All** is selected.
+
 ## Download pace
 
 ⋮ → **Download pace** sets how gently the app downloads:
