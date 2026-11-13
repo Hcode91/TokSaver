@@ -175,6 +175,8 @@ class MainActivity : AppCompatActivity() {
                 R.id.action_select_all -> vm.selectAll()
                 R.id.action_select_new -> vm.selectNew()
                 R.id.action_clear -> vm.clearSelection()
+                R.id.action_hide -> vm.hideSelected()
+                R.id.action_show_hidden -> vm.toggleShowHidden()
                 R.id.action_update -> vm.updateEngine(nightly = false)
                 R.id.action_update_nightly -> vm.updateEngine(nightly = true)
             }
@@ -381,6 +383,12 @@ class MainActivity : AppCompatActivity() {
         }
         renderSaved(s)
         adapter.submitList(s.visibleVideos)
+        toolbar.menu.findItem(R.id.action_hide)?.apply {
+            isVisible = s.selectedCount > 0 && !s.downloading
+            title = if (s.showHidden) "Unhide" else "Hide"
+        }
+        toolbar.menu.findItem(R.id.action_show_hidden)?.title =
+            if (s.showHidden) "Back to all items" else "Show hidden (${s.hiddenCount})"
 
         toolbar.subtitle = s.engineVersion?.let { "engine $it" }
         busy.visibility = if (s.busyText != null || s.fetching) View.VISIBLE else View.GONE

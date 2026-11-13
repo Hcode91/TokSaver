@@ -27,6 +27,10 @@ The browser's ⋮ menu has back, forward, reload, pause/resume detection and the
 
 On the Instagram and Browser tabs, a row of chips shows each account (Instagram) or website (Browser) with a count. Tap one to see only those posts, or tap **All**. **Select all** and **Select not yet downloaded** only affect what's showing. **⋮ → Clear browsed list** clears just the account or site you're filtered to, or everything when **All** is selected.
 
+### Hiding items
+
+Select items and tap **Hide** in the top bar. They disappear from every list, and stay hidden after re-fetching, refreshing or reopening the app. **⋮ → Show hidden (N)** lists them; select some and tap **Unhide** to bring them back.
+
 ## Download pace
 
 ⋮ → **Download pace** sets how gently the app downloads:

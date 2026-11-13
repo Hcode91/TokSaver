@@ -284,6 +284,17 @@ class SavedStore(context: Context) {
         get() = prefs.getBoolean("__anim", true)
         set(v) = prefs.edit().putBoolean("__anim", v).apply()
 
+    // Items the user never wants to see again (platform-prefixed ids).
+    private val hiddenPrefs = context.getSharedPreferences("hidden", MODE_PRIVATE)
+
+    fun hiddenKeys(): Set<String> = hiddenPrefs.getStringSet("keys", emptySet())!!.toHashSet()
+
+    fun setHidden(keys: Collection<String>, hidden: Boolean) {
+        val set = hiddenKeys().toMutableSet()
+        if (hidden) set.addAll(keys) else set.removeAll(keys.toSet())
+        hiddenPrefs.edit().putStringSet("keys", set).apply()
+    }
+
     var lastUpdate: Long
         get() = prefs.getLong("__last_update", 0L)
         set(v) = prefs.edit().putLong("__last_update", v).apply()

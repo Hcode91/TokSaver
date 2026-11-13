@@ -28,16 +28,28 @@ data class UiState(
     val downloading: Boolean = false,
     val savedAccounts: List<ListCache.Saved> = emptyList(),
     val ownerFilter: String? = null,   // Instagram account / website shown (browsed tabs)
+    val hiddenKeys: Set<String> = emptySet(),
+    val showHidden: Boolean = false,   // true = grid shows only the hidden items
 ) {
     val selectedCount get() = videos.count { it.selected }
 
+    fun isHidden(v: Video) = platform.key(v.id) in hiddenKeys
+
+    /** Items in the current list that are hidden. */
+    val hiddenCount get() = videos.count { isHidden(it) }
+
+    private val notHidden: List<Video>
+        get() = videos.filter { isHidden(it) == showHidden }
+
     /** What the grid shows: everything, or just one account / website. */
     val visibleVideos: List<Video>
-        get() = if (ownerFilter == null) videos else videos.filter { (it.owner ?: "") == ownerFilter }
+        get() = notHidden.let { list ->
+            if (ownerFilter == null) list else list.filter { (it.owner ?: "") == ownerFilter }
+        }
 
     /** Accounts / websites in the browsed list, biggest first. */
     val owners: List<Pair<String, Int>>
-        get() = videos.groupingBy { it.owner ?: "" }.eachCount().toList()
+        get() = notHidden.groupingBy { it.owner ?: "" }.eachCount().toList()
             .sortedWith(compareByDescending<Pair<String, Int>> { it.second }.thenBy { it.first })
 }
 
@@ -51,7 +63,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         set(v) { store.animatedPreviews = v }
     private val ig = InstagramClient(app)
     private val _state = MutableStateFlow(
-        UiState(platform = store.platform, username = store.lastUser(store.platform))
+        UiState(
+            platform = store.platform,
+            username = store.lastUser(store.platform),
+            hiddenKeys = store.hiddenKeys(),
+        )
     )
     val state: StateFlow<UiState> = _state
 
@@ -127,7 +143,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         if (st.platform == p || st.fetching || st.downloading) return
         store.platform = p
         _state.update {
-            it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "", ownerFilter = null)
+            it.copy(platform = p, username = store.lastUser(p), videos = emptyList(), status = "", ownerFilter = null, showHidden = false)
         }
         if (p.browsed) loadBrowsed() else showSaved(store.lastUser(p))
         refreshSaved()
@@ -366,8 +382,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun selectNew() = mutate { if (isVisible(it)) it.copy(selected = !it.saved) else it }
 
     private fun isVisible(v: Video): Boolean {
-        val f = _state.value.ownerFilter ?: return true
+        val st = _state.value
+        if (st.isHidden(v) != st.showHidden) return false
+        val f = st.ownerFilter ?: return true
         return (v.owner ?: "") == f
+    }
+
+    /** Hides the selected items for good (or un-hides them when viewing hidden items). */
+    fun hideSelected() {
+        val st = _state.value
+        if (st.downloading) return
+        val keys = st.videos.filter { it.selected && isVisible(it) }.map { st.platform.key(it.id) }
+        if (keys.isEmpty()) return
+        val hide = !st.showHidden
+        store.setHidden(keys, hide)
+        _state.update { s ->
+            s.copy(
+                hiddenKeys = store.hiddenKeys(),
+                videos = s.videos.map { if (it.selected) it.copy(selected = false) else it },
+                status = if (hide) "Hid ${keys.size} · ⋮ → Show hidden to undo" else "Un-hid ${keys.size}",
+            )
+        }
+    }
+
+    fun toggleShowHidden() {
+        if (_state.value.downloading) return
+        _state.update { s ->
+            val on = !s.showHidden
+            s.copy(
+                showHidden = on,
+                ownerFilter = null,
+                videos = s.videos.map { it.copy(selected = false) },
+                status = if (on) "Showing ${s.hiddenCount} hidden · select and use Unhide to bring back"
+                else "${s.videos.size - s.hiddenCount} shown · ${s.hiddenCount} hidden",
+            )
+        }
     }
     fun clearSelection() = mutate { it.copy(selected = false) }
 
