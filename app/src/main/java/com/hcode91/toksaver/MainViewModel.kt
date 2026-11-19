@@ -1,6 +1,7 @@
 package com.hcode91.toksaver
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yausername.ffmpeg.FFmpeg
@@ -9,12 +10,20 @@ import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+
+/** One-off results of pasting a link, for the screen to act on. */
+sealed class PasteEvent {
+    data object Ready : PasteEvent()                        // item added + selected: show download options
+    data class OpenInstagram(val url: String) : PasteEvent()
+    data class OpenWeb(val url: String) : PasteEvent()
+}
 
 data class UiState(
     val engineReady: Boolean = false,
@@ -70,6 +79,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         )
     )
     val state: StateFlow<UiState> = _state
+
+    // Channel so an event isn't lost if the screen isn't listening yet (e.g. a share at launch).
+    private val _events = kotlinx.coroutines.channels.Channel<PasteEvent>(kotlinx.coroutines.channels.Channel.BUFFERED)
+    val events = _events.receiveAsFlow()
+    private var pasteJob: Job? = null
 
     private val engineLock = Mutex()
     private var fetchJob: Job? = null
@@ -371,7 +385,148 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Looks up a single pasted video/post link, adds it to the right tab already selected,
+     * then asks the screen to show the download options.
+     */
+    fun pasteLink(raw: String) {
+        val st = _state.value
+        if (st.fetching || st.downloading) return
+        if (pasteJob?.isActive == true) return
+        val url = Regex("https?://\\S+").find(raw)?.value?.trimEnd('.', ',', ')')
+        if (url == null) {
+            _state.update { it.copy(status = "That doesn't look like a link") }
+            return
+        }
+        val target = Platform.forPastedLink(url)
+        if (target != st.platform) setPlatform(target)
+        _state.update { it.copy(fetching = true, status = "Looking up link…") }
+
+        pasteJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val item = when (target) {
+                    Platform.INSTAGRAM -> resolveInstagram(url) ?: run {
+                        // Not signed in (or lookup failed): open it in the Instagram browser,
+                        // which picks the post up as it loads.
+                        _state.update { it.copy(fetching = false, status = "Opening in the Instagram browser…") }
+                        _events.trySend(PasteEvent.OpenInstagram(url))
+                        return@launch
+                    }
+                    Platform.BROWSER -> resolveWeb(url) ?: run {
+                        _state.update { it.copy(fetching = false, status = "No video found at that link · opening it in the browser") }
+                        _events.trySend(PasteEvent.OpenWeb(url))
+                        return@launch
+                    }
+                    else -> resolveYtDlp(url, target)
+                }
+                addPasted(target, item)
+                _events.trySend(PasteEvent.Ready)
+            } catch (e: Exception) {
+                _state.update { it.copy(fetching = false, status = "Couldn't open that link: ${friendlyError(e.message)}") }
+            }
+        }
+    }
+
+    private suspend fun resolveYtDlp(url: String, platform: Platform): Video {
+        engineLock.withLock { }
+        if (!_state.value.engineReady) throw IllegalStateException("engine not ready")
+        val req = YoutubeDLRequest(url).apply {
+            addOption("--dump-json")
+            addOption("--no-playlist")
+        }
+        val out = YoutubeDL.getInstance().execute(req, PASTE_ID, null).out
+        val line = out.lineSequence().firstOrNull { it.startsWith("{") }
+            ?: throw IllegalStateException("No video found")
+        val o = org.json.JSONObject(line)
+        val id = o.optString("id").ifBlank { throw IllegalStateException("No video found") }
+        val handle = when (platform) {
+            Platform.TIKTOK -> o.optString("uploader").ifBlank { o.optString("uploader_id") }
+            Platform.YOUTUBE, Platform.SHORTS ->
+                o.optString("uploader_id").removePrefix("@").ifBlank { o.optString("channel_id") }
+            else -> Uri.parse(url).host?.removePrefix("www.")
+        }?.ifBlank { null }
+        val thumb = when (platform) {
+            Platform.YOUTUBE -> "https://i.ytimg.com/vi/$id/mqdefault.jpg"
+            else -> o.optString("thumbnail").ifBlank { null }
+        }
+        return Video(
+            id = id,
+            url = o.optString("webpage_url").ifBlank { url },
+            title = o.optString("title"),
+            thumbnail = thumb,
+            duration = o.optDouble("duration", -1.0).toInt().takeIf { it > 0 },
+            views = o.optLong("view_count", -1).takeIf { it >= 0 },
+            timestamp = o.optLong("timestamp", -1).takeIf { it > 0 },
+            owner = handle,
+            referer = if (platform == Platform.BROWSER) url else null,
+        )
+    }
+
+    /** Instagram post/reel link → post via the signed-in session. Null if not possible. */
+    private fun resolveInstagram(url: String): Video? {
+        if (!InstagramClient.isSignedIn()) return null
+        val code = Regex("instagram\\.com/(?:p|reel|reels|tv)/([\\w-]+)").find(url)?.groupValues?.get(1)
+            ?: return null
+        return try { ig.refreshPost(shortcodeToId(code)) } catch (_: Exception) { null }
+    }
+
+    /** Instagram short codes are the post id written in a URL-safe base64 alphabet. */
+    private fun shortcodeToId(code: String): String {
+        val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+        var n = java.math.BigInteger.ZERO
+        val b64 = java.math.BigInteger.valueOf(64)
+        for (c in code.take(11)) {
+            n = n.multiply(b64).add(java.math.BigInteger.valueOf(alphabet.indexOf(c).toLong()))
+        }
+        return n.toString()
+    }
+
+    /** Browser tab: a direct image/video file, or any page yt-dlp understands. */
+    private suspend fun resolveWeb(url: String): Video? {
+        val host = Uri.parse(url).host?.removePrefix("www.") ?: "web"
+        val path = Uri.parse(url).path.orEmpty().lowercase()
+        val isVid = Regex("\\.(mp4|webm|mov|m4v|mkv)$").containsMatchIn(path)
+        val isImg = Regex("\\.(jpe?g|png|webp|gif|avif|bmp)$").containsMatchIn(path)
+        if (isVid || isImg) {
+            return Video(
+                id = WebCatch.idFor(url), url = url, title = host,
+                thumbnail = if (isImg) url else null, duration = null, views = null,
+                timestamp = System.currentTimeMillis() / 1000,
+                media = listOf(MediaItem(url, isVid)), owner = host, referer = null,
+            )
+        }
+        return try {
+            resolveYtDlp(url, Platform.BROWSER).copy(id = WebCatch.idFor(url), owner = host)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Puts a pasted item at the top of its tab, selected and ready to download. */
+    private fun addPasted(p: Platform, item: Video) {
+        store.setHidden(listOf(p.key(item.id)), false)
+        if (p.browsed) {
+            if (p == Platform.INSTAGRAM) BrowserCatch.add(listOf(item)) else WebCatch.add(item)
+            _state.update { it.copy(fetching = false) }
+            loadBrowsed()
+        }
+        _state.update { st ->
+            val existing = st.videos.firstOrNull { it.id == item.id }
+            val top = (existing ?: item).copy(selected = true, saved = store.isSaved(p.key(item.id)))
+            st.copy(
+                fetching = false,
+                ownerFilter = null,
+                showHidden = false,
+                hiddenKeys = store.hiddenKeys(),
+                videos = listOf(top) + st.videos.filter { it.id != item.id }.map { it.copy(selected = false) },
+                status = "Ready: ${item.title.ifBlank { item.id }.take(60)}",
+            )
+        }
+    }
+
     fun stopFetch() {
+        pasteJob?.cancel()
+        YoutubeDL.getInstance().destroyProcessById(PASTE_ID)
         stopFetchFlag = true
         YoutubeDL.getInstance().destroyProcessById(FETCH_ID)
     }
@@ -710,6 +865,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     companion object {
         private const val FETCH_ID = "fetch"
         private const val DL_ID = "dl"
+        private const val PASTE_ID = "paste"
         const val BROWSER_USER = "browser"
     }
 }

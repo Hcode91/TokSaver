@@ -51,11 +51,32 @@ enum class Platform(
         else "https://www.youtube.com/@$user"
 
     companion object {
+        private val singleItem = listOf(
+            Regex("tiktok\\.com/@[\\w.-]+/(video|photo)/\\d+"),
+            Regex("(vm|vt)\\.tiktok\\.com/\\w+"),
+            Regex("tiktok\\.com/t/\\w+"),
+            Regex("youtube\\.com/(watch\\?|shorts/|live/)"),
+            Regex("youtu\\.be/"),
+            Regex("instagram\\.com/(p|reel|reels|tv)/[\\w-]+"),
+        )
+
+        /** True for a link to one video/post (rather than a whole profile). */
+        fun isSingleItemLink(text: String) = singleItem.any { it.containsMatchIn(text) }
+
+        /** Which tab a pasted single-item link belongs to (anything else goes to Browser). */
+        fun forPastedLink(url: String): Platform = when {
+            "tiktok.com" in url -> TIKTOK
+            "youtube.com/shorts/" in url -> SHORTS
+            "youtube.com" in url || "youtu.be" in url -> YOUTUBE
+            "instagram.com" in url -> INSTAGRAM
+            else -> BROWSER
+        }
+
         /** Works out the platform from a shared link. */
         fun fromLink(text: String): Platform? = when {
             "tiktok.com" in text -> TIKTOK
             "youtube.com" in text && "/shorts" in text -> SHORTS
-            "youtube.com" in text -> YOUTUBE
+            "youtube.com" in text || "youtu.be" in text -> YOUTUBE
             "instagram.com" in text -> INSTAGRAM
             else -> null
         }

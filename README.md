@@ -27,6 +27,16 @@ The browser's ⋮ menu has back, forward, reload, pause/resume detection and the
 
 On the Instagram and Browser tabs, a row of chips shows each account (Instagram) or website (Browser) with a count. Tap one to see only those posts, or tap **All**. **Select all** and **Select not yet downloaded** only affect what's showing. **⋮ → Clear browsed list** clears just the account or site you're filtered to, or everything when **All** is selected.
 
+### Paste a link
+
+Tap the 🔗 **Paste link** button in the top bar (it fills in from your clipboard) to grab a single video or post on any tab:
+
+- TikTok, YouTube and Shorts links go to their tab, already selected, and the download options open straight away.
+- Instagram post and Reel links work the same when you're signed in. Otherwise the link opens in the Instagram browser, which picks the post up.
+- Any other link goes to **Browser**: direct image or video files, or any page yt-dlp supports. If nothing's found, the page opens in the browser so detection can find it.
+
+Pasting a single-video link into the username box, or sharing one to the app, does the same thing.
+
 ### Hiding items
 
 Select items and tap **Hide** in the top bar. They disappear from every list, and stay hidden after re-fetching, refreshing or reopening the app. **⋮ → Show hidden (N)** lists them; select some and tap **Unhide** to bring them back.

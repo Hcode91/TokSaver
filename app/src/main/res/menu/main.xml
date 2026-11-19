@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item android:id="@+id/action_paste" android:icon="@drawable/ic_link" android:title="Paste link" app:showAsAction="ifRoom" />
     <item android:id="@+id/action_hide" android:title="Hide" android:visible="false" app:showAsAction="always|withText" />
     <item android:id="@+id/action_show_hidden" android:title="Show hidden" app:showAsAction="never" />
     <item android:id="@+id/action_full_reload" android:title="Full reload (ignore cache)" app:showAsAction="never" />

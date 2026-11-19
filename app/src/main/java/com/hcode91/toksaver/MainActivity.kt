@@ -55,8 +55,32 @@ class MainActivity : AppCompatActivity() {
         vm.loadBrowsed()
     }
 
-    private fun openWeb() {
-        igBrowser.launch(Intent(this, WebBrowserActivity::class.java))
+    private fun openWeb(url: String? = null) {
+        igBrowser.launch(
+            Intent(this, WebBrowserActivity::class.java)
+                .apply { url?.let { putExtra(WebBrowserActivity.EXTRA_URL, it) } }
+        )
+    }
+
+    /** Paste one video/post link (any tab). Pre-fills from the clipboard when it holds a link. */
+    private fun askPasteLink() {
+        val clip = (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager)
+            .primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString().orEmpty()
+        val field = TextInputEditText(this).apply {
+            hint = "https://…"
+            setSingleLine()
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            if (clip.contains("http")) setText(clip.trim())
+        }
+        val pad = (20 * resources.displayMetrics.density).toInt()
+        val box = android.widget.FrameLayout(this).apply { setPadding(pad, pad / 2, pad, 0); addView(field) }
+        MaterialAlertDialogBuilder(this)
+            .setTitle("Paste a video or post link")
+            .setMessage("TikTok, YouTube, Shorts and Instagram links go to their own tab. Any other link goes to Browser.")
+            .setView(box)
+            .setPositiveButton("Get it") { _, _ -> vm.pasteLink(field.text?.toString().orEmpty()) }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun openInstagram(url: String? = null) {
@@ -176,6 +200,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.action_select_new -> vm.selectNew()
                 R.id.action_clear -> vm.clearSelection()
                 R.id.action_hide -> vm.hideSelected()
+                R.id.action_paste -> askPasteLink()
                 R.id.action_show_hidden -> vm.toggleShowHidden()
                 R.id.action_update -> vm.updateEngine(nightly = false)
                 R.id.action_update_nightly -> vm.updateEngine(nightly = true)
@@ -186,6 +211,27 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 vm.state.collect { render(it) }
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                vm.events.collect { e ->
+                    when (e) {
+                        PasteEvent.Ready -> {
+                            findViewById<ChipGroup>(R.id.platforms).check(2000 + vm.state.value.platform.ordinal)
+                            input.setText(if (vm.state.value.platform.browsed) "" else vm.state.value.username)
+                            askFrameMode()
+                        }
+                        is PasteEvent.OpenInstagram -> {
+                            findViewById<ChipGroup>(R.id.platforms).check(2000 + Platform.INSTAGRAM.ordinal)
+                            openInstagram(e.url)
+                        }
+                        is PasteEvent.OpenWeb -> {
+                            findViewById<ChipGroup>(R.id.platforms).check(2000 + Platform.BROWSER.ordinal)
+                            openWeb(e.url)
+                        }
+                    }
+                }
             }
         }
     }
@@ -199,6 +245,10 @@ class MainActivity : AppCompatActivity() {
     private fun handleShare(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND) return
         val text = intent.getStringExtra(Intent.EXTRA_TEXT) ?: return
+        if (Platform.isSingleItemLink(text)) {
+            vm.pasteLink(text)
+            return
+        }
         val p = Platform.fromLink(text) ?: return
         val user = p.cleanUser(text).takeIf { it.isNotBlank() } ?: return
         if (vm.state.value.fetching || vm.state.value.downloading) return
@@ -224,6 +274,11 @@ class MainActivity : AppCompatActivity() {
         (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
             .hideSoftInputFromWindow(input.windowToken, 0)
         input.clearFocus()
+        if (Platform.isSingleItemLink(text)) {
+            input.setText(vm.state.value.username)
+            vm.pasteLink(text)
+            return
+        }
         vm.fetch(text)
     }
 
@@ -372,6 +427,10 @@ class MainActivity : AppCompatActivity() {
     private fun render(s: UiState) {
         if (shownPlatform != s.platform) {
             shownPlatform = s.platform
+            // Keep the tab chips in step when the app switches tab itself (e.g. a pasted link).
+            findViewById<ChipGroup>(R.id.platforms).let { g ->
+                if (g.checkedChipId != 2000 + s.platform.ordinal) g.check(2000 + s.platform.ordinal)
+            }
             (grid.layoutManager as GridLayoutManager).spanCount = s.platform.columns
             adapter.platform = s.platform
             userLayout.hint = s.platform.hint
